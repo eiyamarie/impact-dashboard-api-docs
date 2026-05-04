@@ -30,8 +30,8 @@ Typical integrations use the API to:
 1. Get an API key from the Impact Dashboard administrator.
 2. Send every request with the required JSON headers and `x-api-key` header.
 3. Create a client with `POST /api/webhooks/clients`.
-4. Store the returned `client.id`.
-5. Use that client ID in later client-specific endpoint paths.
+4. Send a CRM `contactid` when creating the client.
+5. Use the same `contactid` in later client-specific endpoint paths.
 6. Store returned `call.id` values when creating calls so they can be updated later.
 7. Treat every non-2xx response as a failed write and log the response body for troubleshooting.
 
@@ -84,7 +84,8 @@ If API key verification is not configured on the server, requests return HTTP `5
 - Dates must be ISO 8601 datetimes with a timezone offset, for example `2026-05-01T10:00:00.000Z` or `2026-05-01T18:00:00+08:00`.
 - Money fields may be JSON numbers or numeric strings such as `2500`, `"2500"`, or `"2500.00"`.
 - JSON metadata fields may contain strings, numbers, booleans, null, arrays, or objects.
-- Client and call IDs are path parameters returned by successful create responses.
+- Client-specific paths accept either the dashboard client id or the CRM `contactid`.
+- Call-specific paths use the dashboard call id returned by successful create-call responses.
 
 ## Responses And Errors
 
@@ -118,13 +119,17 @@ Validation error responses return HTTP `400`:
 }
 ```
 
+### Client ID vs. Contact ID
+
+All routes that take a `{clientId}` path parameter accept **either** the dashboard's internal id (returned in the `id` field when a client is created) **or** the CRM `contactid` sent during client creation. Using the CRM `contactid` directly is the recommended approach for automations so there is no need to store and forward the internal id between steps.
+
 ### Common Errors
 
 | Status | Message | Meaning |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
 | `401` | `Invalid API key.` | Missing or incorrect `x-api-key`. |
-| `404` | `Client not found.` | The `{clientId}` path parameter does not match a client. |
+| `404` | `Client not found.` | The `{clientId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
 | `409` | Resource-specific conflict message | A unique value already exists. |
 | `500` | Resource-specific failure message | Unexpected server or database failure. Retry with backoff and alert if repeated. |
@@ -169,6 +174,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| `contactid` | string | Yes | CRM contact ID. Stored and used to identify the client in all follow-up webhook calls. |
 | `name` | string | Yes | Client full name. |
 | `email` | string | Yes | Client email. Lowercased and validated as an email address. Must be unique. |
 | `phone` | string | No | Client phone number. |
@@ -198,6 +204,7 @@ Example request:
 
 ```json
 {
+  "contactid": "zMC7sAfinnBzqYy8n98V",
   "name": "Jamie Rivera",
   "email": "Jamie.Rivera@example.com",
   "phone": "+15555550123",
@@ -222,6 +229,7 @@ Example success response, HTTP `201`:
   "success": true,
   "client": {
     "id": "clwclient123",
+    "contactId": "zMC7sAfinnBzqYy8n98V",
     "name": "Jamie Rivera",
     "email": "jamie.rivera@example.com",
     "track": "BEGINNER",
@@ -238,8 +246,8 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid request payload.` | Missing `name` or `email`, invalid email, invalid date/money format, or unknown fields. |
-| `409` | `Client already exists.` | Another client already uses the email. |
+| `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid date/money format, or unknown fields. |
+| `409` | `Client already exists.` | Another client already uses the email or `contactid`. |
 | `500` | `Failed to create client.` | Unexpected database/server failure. |
 
 ### PATCH /api/webhooks/clients/{clientId}/onboarding - Update Onboarding
@@ -770,15 +778,16 @@ curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
+    "contactid": "zMC7sAfinnBzqYy8n98V",
     "name": "Jamie Rivera",
     "email": "jamie.rivera@example.com"
   }'
 ```
 
-Create a call for the returned client ID:
+Create a call using the CRM contact ID:
 
 ```bash
-curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients/clwclient123/calls" \
+curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients/zMC7sAfinnBzqYy8n98V/calls" \
   -H "x-api-key: $IMPACT_DASHBOARD_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
