@@ -514,6 +514,7 @@ Request body schema:
 | `status` | enum | Yes | One of `completed`, `no_show`, `cancelled`, `rebooked`. |
 | `happened_at` | ISO datetime | No | Actual call time with timezone. |
 | `recording_url` | string | No | Recording URL. |
+| `contact_id` | string | No | If set, the call must belong to this client (dashboard client id or CRM `contactid`). Omit to update by call id only. |
 
 Status mapping:
 
@@ -530,9 +531,12 @@ Example request:
 {
   "status": "completed",
   "happened_at": "2026-05-03T09:04:00.000Z",
-  "recording_url": "https://example.com/recordings/call-123"
+  "recording_url": "https://example.com/recordings/call-123",
+  "contact_id": "zMC7sAfinnBzqYy8n98V"
 }
 ```
+
+Omit `contact_id` when you only have the dashboard `call.id` from the create-call response. Include it when you want the server to reject the update if the call is not tied to that CRM contact or internal client id.
 
 Example success response, HTTP `200`:
 
@@ -556,7 +560,9 @@ Endpoint-specific errors:
 | --- | --- | --- |
 | `400` | `Invalid call id.` | `{callId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `status`, invalid date, blank optional string, or unknown fields. |
-| `404` | `Call not found.` | No call exists for `{callId}`. |
+| `404` | `Client not found.` | `contact_id` was sent but does not match any client. |
+| `404` | `Call not found.` | No call exists for `{callId}` (when `contact_id` is omitted). |
+| `404` | `Call not found or does not belong to the specified client.` | `contact_id` is set but no call matches both `{callId}` and that client. |
 | `500` | `Failed to update call.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/clients/{clientId}/payments - Create Payment
