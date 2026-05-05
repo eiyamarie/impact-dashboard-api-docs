@@ -27,8 +27,8 @@ Typical integrations use the API to:
 
 ## Quickstart
 
-1. Get an API key from the Impact Dashboard administrator.
-2. Send every request with the required JSON headers and `x-api-key` header.
+1. Get webhook credentials from the Impact Dashboard administrator.
+2. Send every request with the required JSON headers and either signed webhook headers or the legacy `x-api-key` header.
 3. Create a client with `POST /api/webhooks/clients`.
 4. Send a CRM `contactid` when creating the client.
 5. Use the same `contactid` in later client-specific endpoint paths.
@@ -45,9 +45,21 @@ All paths in this document are relative to this base URL.
 
 ## Authentication
 
-All endpoints require a shared API key. Request an API key from the Impact Dashboard administrator and store it in your automation platform's secret manager.
+All endpoints require webhook credentials. Signed webhook headers are preferred for new integrations. The legacy shared API key remains supported for existing automations during migration.
 
-Required headers for every request:
+Preferred signed headers for every request:
+
+```http
+x-webhook-key-id: default
+x-webhook-timestamp: <UNIX_TIMESTAMP_MS>
+x-webhook-signature: <HMAC_SHA256_HEX_OF_TIMESTAMP_DOT_RAW_BODY>
+Content-Type: application/json
+Accept: application/json
+```
+
+The signature is an HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>` using the secret assigned to `x-webhook-key-id`. Requests older than five minutes are rejected.
+
+Legacy headers:
 
 ```http
 x-api-key: <API_KEY>
@@ -55,23 +67,23 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-Do not send the API key in query parameters or request bodies. Do not paste the real API key into documentation, screenshots, logs, or source code.
+Do not send webhook secrets in query parameters or request bodies. Do not paste real credentials into documentation, screenshots, logs, or source code.
 
 Authentication failures return HTTP `401`:
 
 ```json
 {
   "success": false,
-  "error": "Invalid API key."
+  "error": "Invalid webhook credentials."
 }
 ```
 
-If API key verification is not configured on the server, requests return HTTP `500`:
+If webhook credential verification is not configured on the server, requests return HTTP `503`:
 
 ```json
 {
   "success": false,
-  "error": "Webhook API key is not configured."
+  "error": "Webhook credentials are unavailable."
 }
 ```
 
@@ -128,7 +140,7 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 | Status | Message | Meaning |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
-| `401` | `Invalid API key.` | Missing or incorrect `x-api-key`. |
+| `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers or legacy `x-api-key`. |
 | `404` | `Client not found.` | The `{clientId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
 | `409` | Resource-specific conflict message | A unique value already exists. |
@@ -136,7 +148,9 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 
 ### Rate Limits
 
-No application-level rate limit is currently implemented for these endpoints. Integrations should still avoid duplicate retries and use normal backoff for transient `500` responses. Create endpoints are not generally idempotent unless a unique database constraint is hit; do not blindly replay successful requests.
+Webhook endpoints are rate-limited. Integrations should avoid duplicate retries and use normal backoff for transient `500` responses.
+
+For payment and engagement event webhooks, send an `Idempotency-Key` header or a stable external event/payment id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second financial or event record.
 
 ## Endpoint Summary
 
@@ -557,6 +571,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
+| `external_payment_id` | string | No | Stable upstream payment id used to reject duplicate payment deliveries. |
 | `amount` | money | Yes | Payment amount received. |
 | `payment_date` | ISO datetime | Yes | Payment timestamp with timezone. |
 | `cash_collected` | money | No | Cash collected value to store on this payment and optionally update on the client. |
@@ -573,6 +588,7 @@ Example request:
 
 ```json
 {
+  "external_payment_id": "stripe_pi_123",
   "amount": "1000.00",
   "payment_date": "2026-05-05T12:00:00.000Z",
   "cash_collected": "2000.00",
@@ -613,6 +629,7 @@ Endpoint-specific errors:
 | `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing `amount` or `payment_date`, invalid money/date format, blank optional string, or unknown fields. |
 | `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/clients/{clientId}/engagement - Create Engagement Event
@@ -628,6 +645,7 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `event_type` | enum | Yes | One of the supported engagement event values below. |
+| `event_id` | string | No | Stable upstream event id used to reject duplicate event deliveries. |
 | `event_date` | ISO datetime | Yes | Event timestamp with timezone. |
 | `metadata` | JSON | No | Structured event details. |
 
@@ -650,6 +668,7 @@ Example request:
 ```json
 {
   "event_type": "module_completed",
+  "event_id": "lms_event_123",
   "event_date": "2026-05-06T14:00:00.000Z",
   "metadata": {
     "module": "Discovery Calls",
@@ -684,6 +703,7 @@ Endpoint-specific errors:
 | `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `event_type`, invalid `event_date`, invalid metadata, or unknown fields. |
 | `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `409` | `Duplicate engagement webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
 | `500` | `Failed to create engagement event.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/clients/{clientId}/dev-docs - Create Development Document
