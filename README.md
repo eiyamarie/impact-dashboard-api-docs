@@ -5,6 +5,7 @@ Public API documentation for automation systems that create and update client re
 ## Contents
 
 - [Overview](#overview)
+- [Typical integration flow](#typical-integration-flow)
 - [Quickstart](#quickstart)
 - [Base URL](#base-url)
 - [Authentication](#authentication)
@@ -25,13 +26,25 @@ Typical integrations use the API to:
 - Create scheduled calls and update the call after it is completed, missed, cancelled, or rebooked.
 - Attach generated development documents to a client and, optionally, to a specific call.
 
+### Typical integration flow
+
+Most automations follow this shape:
+
+1. **Create the client** with `POST /api/webhooks/clients` and a stable CRM **`contactid`**. You can reuse that same `contactid` in every later URL that shows `{clientId}`, so you do not have to store the dashboard internal id (though that internal id is also accepted).
+2. **Parallel enrichment updates** as data arrives: onboarding milestones (`PATCH .../onboarding`), Discord ids (`PATCH .../discord`), track/group (`PATCH .../track`).
+3. **Calls**: create with `POST .../calls`, then later finalize with `PATCH /api/webhooks/calls/{callId}`. Keep the returned **`call.id`** from step one if you need to patch by call id.
+4. **Financial and activity events**: payments (`POST .../payments`) and engagement (`POST .../engagement`) should use idempotency keys or stable external ids when retries are possible.
+5. **Weekly dev docs** (`POST .../dev-docs`) optionally reference an existing `call_id`.
+
+You only need the endpoints your automation actually produces; there is no requirement to call every route.
+
 ## Quickstart
 
 1. Get webhook credentials from the Impact Dashboard administrator.
-2. Send every request with the required JSON headers and either signed webhook headers or the legacy `x-api-key` header.
+2. Send every request with `Content-Type: application/json` and **`Accept: application/json`**, then choose **either** signed webhook headers **or** the legacy `x-api-key` header (do not mix a partial set of signed headers with the legacy key).
 3. Create a client with `POST /api/webhooks/clients`.
 4. Send a CRM `contactid` when creating the client.
-5. Use the same `contactid` in later client-specific endpoint paths.
+5. Use the same `contactid` in later client-specific endpoint paths (or use the internal `client.id` from the create response).
 6. Store returned `call.id` values when creating calls so they can be updated later.
 7. Treat every non-2xx response as a failed write and log the response body for troubleshooting.
 
@@ -47,27 +60,56 @@ All paths in this document are relative to this base URL.
 
 All endpoints require webhook credentials. Signed webhook headers are preferred for new integrations. The legacy shared API key remains supported for existing automations during migration.
 
+**Choosing a mode**
+
+- If you send **any** of `x-webhook-key-id`, `x-webhook-timestamp`, or `x-webhook-signature`, the server treats the request as **signed mode** and validates all required signed headers together. Missing pieces or a bad signature produce `401`.
+- Otherwise the server expects **`x-api-key`** (legacy).
+
 Preferred signed headers for every request:
 
 ```http
 x-webhook-key-id: default
-x-webhook-timestamp: <UNIX_TIMESTAMP_MS>
-x-webhook-signature: <HMAC_SHA256_HEX_OF_TIMESTAMP_DOT_RAW_BODY>
+x-webhook-timestamp: UNIX_TIMESTAMP_MS
+x-webhook-signature: HMAC_SHA256_HEX
 Content-Type: application/json
 Accept: application/json
 ```
 
-The signature is an HMAC-SHA256 hex digest of `<timestamp>.<raw JSON body>` using the secret assigned to `x-webhook-key-id`. Requests older than five minutes are rejected.
+**How the signature is computed**
+
+1. Take the **`x-webhook-timestamp`** value exactly as you will send it (digits only, Unix time in milliseconds).
+2. Take the **raw HTTP body** exactly as sent (same bytes as after `Content-Type: application/json`).
+3. Build one string: `timestamp + "." + rawBody` (one ASCII dot between them).
+4. Compute **HMAC-SHA256** of that string using the webhook signing secret for your `x-webhook-key-id`.
+5. Send the digest as **lowercase hexadecimal** in `x-webhook-signature`.
+
+The server rejects requests whose timestamp is more than **five minutes** from server time.
+
+**Secrets**
+
+- Single secret (common): env `WEBHOOK_SIGNING_SECRET`, used when `x-webhook-key-id` is `default`.
+- Multiple secrets: env `WEBHOOK_SIGNING_SECRETS` as comma-separated entries `keyId:secret` (for example `prod:abc...,staging:def...`). The id before each colon must match `x-webhook-key-id`.
 
 Legacy headers:
 
 ```http
-x-api-key: <API_KEY>
+x-api-key: API_KEY
 Content-Type: application/json
 Accept: application/json
 ```
 
 Do not send webhook secrets in query parameters or request bodies. Do not paste real credentials into documentation, screenshots, logs, or source code.
+
+**Network allowlists**
+
+Some deployments restrict webhook callers by IP. If your IP is not allowed, responses return HTTP **`403`** with:
+
+```json
+{
+  "success": false,
+  "error": "Request origin not permitted."
+}
+```
 
 Authentication failures return HTTP `401`:
 
@@ -78,7 +120,7 @@ Authentication failures return HTTP `401`:
 }
 ```
 
-If webhook credential verification is not configured on the server, requests return HTTP `503`:
+If legacy **`x-api-key`** verification cannot run because **`WEBHOOK_API_KEY`** is not configured on the server, those legacy requests return HTTP **`503`**:
 
 ```json
 {
@@ -87,17 +129,24 @@ If webhook credential verification is not configured on the server, requests ret
 }
 ```
 
+Signed requests do **not** use `WEBHOOK_API_KEY`; they only need the signing secret for your key id to be configured.
+
 ## Request Rules
 
-- Request bodies must be valid JSON objects.
-- Unknown fields are rejected.
+- Request bodies must be valid JSON **objects** (not bare arrays or primitives).
+- **Extra JSON keys:** On `POST /api/webhooks/clients`, unknown keys are **ignored** (silently dropped). On **every other** webhook endpoint in this document, unknown keys cause **`400`** validation errors because schemas are strict.
 - Required strings must be non-empty after trimming.
 - Optional string fields may be omitted, but if present must be non-empty after trimming.
 - Dates must be ISO 8601 datetimes with a timezone offset, for example `2026-05-01T10:00:00.000Z` or `2026-05-01T18:00:00+08:00`.
 - Money fields may be JSON numbers or numeric strings such as `2500`, `"2500"`, or `"2500.00"`.
-- JSON metadata fields may contain strings, numbers, booleans, null, arrays, or objects.
+- JSON metadata fields (where documented) may contain strings, numbers, booleans, null, arrays, or nested objects, but nested metadata is capped at **8 levels** deep and **500** scalar/array/object nodes total per field.
 - Client-specific paths accept either the dashboard client id or the CRM `contactid`.
 - Call-specific paths use the dashboard call id returned by successful create-call responses.
+
+### Payload limits
+
+- Maximum JSON body size is **256 KiB**.
+- Oversized bodies fail validation like malformed JSON (typically **`400`** `Invalid request payload.`).
 
 ## Responses And Errors
 
@@ -141,14 +190,16 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
 | `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers or legacy `x-api-key`. |
+| `403` | `Request origin not permitted.` | Caller IP not in the server's webhook IP allowlist (when configured). |
 | `404` | `Client not found.` | The `{clientId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
 | `409` | Resource-specific conflict message | A unique value already exists. |
+| `429` | `Too many requests.` | Webhook rate limit exceeded for this IP; retry with backoff. |
 | `500` | Resource-specific failure message | Unexpected server or database failure. Retry with backoff and alert if repeated. |
 
 ### Rate Limits
 
-Webhook endpoints are rate-limited. Integrations should avoid duplicate retries and use normal backoff for transient `500` responses.
+Webhook routes may return HTTP **`429`** with `Too many requests.` when a caller exceeds the configured per-IP limit for `/api/webhooks` (the reference implementation uses **120 requests per rolling minute** per IP). Treat **`429`** like other transient errors: back off and retry.
 
 For payment and engagement event webhooks, send an `Idempotency-Key` header or a stable external event/payment id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second financial or event record.
 
@@ -170,7 +221,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 
 ### POST /api/webhooks/clients - Create Client
 
-Creates a new dashboard client from a sale or enrollment event.
+Creates a new dashboard client from a sale or enrollment event. Extra JSON keys in the body are **ignored** on this route only.
 
 ```http
 POST /api/webhooks/clients
@@ -795,6 +846,8 @@ Endpoint-specific errors:
 | `500` | `Failed to create development doc.` | Unexpected database/server failure. |
 
 ## Curl Examples
+
+These examples use **`x-api-key`**. For signed webhooks, send **`x-webhook-key-id`**, **`x-webhook-timestamp`**, and **`x-webhook-signature`** as described under [Authentication](#authentication), and omit **`x-api-key`**.
 
 Create a client:
 
