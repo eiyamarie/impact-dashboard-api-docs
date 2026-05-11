@@ -80,17 +80,14 @@ Accept: application/json
 1. Take the **`x-webhook-timestamp`** value exactly as you will send it (digits only, Unix time in milliseconds).
 2. Take the **raw HTTP body** exactly as sent (same bytes as after `Content-Type: application/json`).
 3. Build one string: `timestamp + "." + rawBody` (one ASCII dot between them).
-4. Compute **HMAC-SHA256** of that string using the webhook signing secret for your `x-webhook-key-id`.
+4. Compute **HMAC-SHA256** of that string using the signing secret the operator shares with you (this is **`WEBHOOK_SIGNING_SECRET`** on the server).
 5. Send the digest as **lowercase hexadecimal** in `x-webhook-signature`.
 
 The server rejects requests whose timestamp is more than **five minutes** from server time.
 
-**Secrets**
+Every new integration uses **`x-webhook-key-id: default`** as in the preferred headers above. The operator configures **`WEBHOOK_SIGNING_SECRET`**; use that secret for the HMAC and keep it off the wire except in HTTPS headers described here.
 
-- Single secret (common): env `WEBHOOK_SIGNING_SECRET`, used when `x-webhook-key-id` is `default`.
-- Multiple secrets: env `WEBHOOK_SIGNING_SECRETS` as comma-separated entries `keyId:secret` (for example `prod:abc...,staging:def...`). The id before each colon must match `x-webhook-key-id`.
-
-Legacy headers:
+**Legacy `x-api-key`**
 
 ```http
 x-api-key: API_KEY
@@ -120,16 +117,7 @@ Authentication failures return HTTP `401`:
 }
 ```
 
-If legacy **`x-api-key`** verification cannot run because **`WEBHOOK_API_KEY`** is not configured on the server, those legacy requests return HTTP **`503`**:
-
-```json
-{
-  "success": false,
-  "error": "Webhook credentials are unavailable."
-}
-```
-
-Signed requests do **not** use `WEBHOOK_API_KEY`; they only need the signing secret for your key id to be configured.
+If your integration uses **`x-api-key`** (legacy) but the server operator has **not** set **`WEBHOOK_API_KEY`**, those requests receive HTTP **`401`** with the standard authentication error shape—the same **`401`** you get for a missing or incorrect key. Operators should configure **`WEBHOOK_API_KEY`** for legacy callers or migrate to signing with **`WEBHOOK_SIGNING_SECRET`** (above). Server logs may still record that **`WEBHOOK_API_KEY`** is unset when diagnosing failed deliveries.
 
 ## Request Rules
 
@@ -189,7 +177,7 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 | Status | Message | Meaning |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
-| `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers or legacy `x-api-key`. |
+| `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers, wrong legacy **`x-api-key`**, or legacy mode used while **`WEBHOOK_API_KEY`** is unset on the server (see [Authentication](#authentication)). |
 | `403` | `Request origin not permitted.` | Caller IP not in the server's webhook IP allowlist (when configured). |
 | `404` | `Client not found.` | The `{clientId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
@@ -200,6 +188,8 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 ### Rate Limits
 
 Webhook routes may return HTTP **`429`** with `Too many requests.` when a caller exceeds the configured per-IP limit for `/api/webhooks` (the reference implementation uses **120 requests per rolling minute** per IP). Treat **`429`** like other transient errors: back off and retry.
+
+In **this repository**, those limits are enforced in **`proxy.ts`** at the project root (Next.js 16’s proxy hook convention; **`middleware.ts`** is not used). Paths under **`/api/auth`** share a tighter per-IP limit for abuse protection.
 
 For payment and engagement event webhooks, send an `Idempotency-Key` header or a stable external event/payment id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second financial or event record.
 
