@@ -51,10 +51,10 @@ You only need the endpoints your automation actually produces; there is no requi
 ## Base URL
 
 ```text
-https://impact-dashboard.up.railway.app
+https://dashboard.impactteam.us
 ```
 
-All paths in this document are relative to this base URL.
+All paths in this document are relative to this base URL. The same origin is defined in code as `PRODUCTION_APP_URL` in [`lib/app-url.ts`](lib/app-url.ts).
 
 ## Authentication
 
@@ -847,7 +847,7 @@ These examples use **`x-api-key`**. For signed webhooks, send **`x-webhook-key-i
 Create a client:
 
 ```bash
-curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients" \
+curl -X POST "https://dashboard.impactteam.us/api/webhooks/clients" \
   -H "x-api-key: $IMPACT_DASHBOARD_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
@@ -861,7 +861,7 @@ curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients" \
 Create a call using the GHL contact ID:
 
 ```bash
-curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/contacts/zMC7sAfinnBzqYy8n98V/calls" \
+curl -X POST "https://dashboard.impactteam.us/api/webhooks/contacts/zMC7sAfinnBzqYy8n98V/calls" \
   -H "x-api-key: $IMPACT_DASHBOARD_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
@@ -874,7 +874,7 @@ curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/contacts/zMC7
 Update the returned call ID:
 
 ```bash
-curl -X PATCH "https://impact-dashboard.up.railway.app/api/webhooks/calls/clwcall123" \
+curl -X PATCH "https://dashboard.impactteam.us/api/webhooks/calls/clwcall123" \
   -H "x-api-key: $IMPACT_DASHBOARD_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
