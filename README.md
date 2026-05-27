@@ -30,7 +30,7 @@ Typical integrations use the API to:
 
 Most automations follow this shape:
 
-1. **Create the client** with `POST /api/webhooks/clients` and a stable CRM **`contactid`**. You can reuse that same `contactid` in every later URL that shows `{clientId}`, so you do not have to store the dashboard internal id (though that internal id is also accepted).
+1. **Create the client** with `POST /api/webhooks/clients` and a stable CRM **`contactid`**. Use that same `contactid` as the `{contactId}` in every later contact-scoped URL.
 2. **Parallel enrichment updates** as data arrives: onboarding milestones (`PATCH .../onboarding`), Discord ids (`PATCH .../discord`), track/group (`PATCH .../track`).
 3. **Calls**: create with `POST .../calls`, then later finalize with `PATCH /api/webhooks/calls/{callId}`. Keep the returned **`call.id`** from step one if you need to patch by call id.
 4. **Financial and activity events**: payments (`POST .../payments`) and engagement (`POST .../engagement`) should use idempotency keys or stable external ids when retries are possible.
@@ -44,7 +44,7 @@ You only need the endpoints your automation actually produces; there is no requi
 2. Send every request with `Content-Type: application/json` and **`Accept: application/json`**, then choose **either** signed webhook headers **or** the legacy `x-api-key` header (do not mix a partial set of signed headers with the legacy key).
 3. Create a client with `POST /api/webhooks/clients`.
 4. Send a CRM `contactid` when creating the client.
-5. Use the same `contactid` in later client-specific endpoint paths (or use the internal `client.id` from the create response).
+5. Use that same `contactid` as `{contactId}` in all contact-scoped endpoint paths.
 6. Store returned `call.id` values when creating calls so they can be updated later.
 7. Treat every non-2xx response as a failed write and log the response body for troubleshooting.
 
@@ -128,7 +128,7 @@ If your integration uses **`x-api-key`** (legacy) but the server operator has **
 - Dates must be ISO 8601 datetimes with a timezone offset, for example `2026-05-01T10:00:00.000Z` or `2026-05-01T18:00:00+08:00`.
 - Money fields may be JSON numbers or numeric strings such as `2500`, `"2500"`, or `"2500.00"`.
 - JSON metadata fields (where documented) may contain strings, numbers, booleans, null, arrays, or nested objects, but nested metadata is capped at **8 levels** deep and **500** scalar/array/object nodes total per field.
-- Client-specific paths accept either the dashboard client id or the CRM `contactid`.
+- Contact-scoped paths use the `{contactId}` path parameter, which accepts either the GHL CRM `contactid` or the dashboard's internal client id.
 - Call-specific paths use the dashboard call id returned by successful create-call responses.
 
 ### Payload limits
@@ -168,9 +168,9 @@ Validation error responses return HTTP `400`:
 }
 ```
 
-### Client ID vs. Contact ID
+### Contact ID
 
-All routes that take a `{clientId}` path parameter accept **either** the dashboard's internal id (returned in the `id` field when a client is created) **or** the CRM `contactid` sent during client creation. Using the CRM `contactid` directly is the recommended approach for automations so there is no need to store and forward the internal id between steps.
+All contact-scoped routes use a `{contactId}` path parameter. This accepts **either** the GHL CRM `contactid` sent during client creation **or** the dashboard's internal client id (returned in the `id` field of the create-client response). Using the GHL `contactid` directly is the recommended approach for automations — there is no need to store or forward the internal id.
 
 ### Common Errors
 
@@ -179,7 +179,7 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
 | `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers, wrong legacy **`x-api-key`**, or legacy mode used while **`WEBHOOK_API_KEY`** is unset on the server (see [Authentication](#authentication)). |
 | `403` | `Request origin not permitted.` | Caller IP not in the server's webhook IP allowlist (when configured). |
-| `404` | `Client not found.` | The `{clientId}` path parameter does not match a client by internal id or `contactid`. |
+| `404` | `Client not found.` | The `{contactId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
 | `409` | Resource-specific conflict message | A unique value already exists. |
 | `429` | `Too many requests.` | Webhook rate limit exceeded for this IP; retry with backoff. |
@@ -189,7 +189,7 @@ All routes that take a `{clientId}` path parameter accept **either** the dashboa
 
 Webhook routes may return HTTP **`429`** with `Too many requests.` when a caller exceeds the configured per-IP limit for `/api/webhooks` (the reference implementation uses **120 requests per rolling minute** per IP). Treat **`429`** like other transient errors: back off and retry.
 
-In **this repository**, those limits are enforced in **`proxy.ts`** at the project root (Next.js 16’s proxy hook convention; **`middleware.ts`** is not used). Paths under **`/api/auth`** share a tighter per-IP limit for abuse protection.
+In **this repository**, those limits are enforced in **`proxy.ts`** at the project root (Next.js 16's proxy hook convention; **`middleware.ts`** is not used). Paths under **`/api/auth`** share a tighter per-IP limit for abuse protection.
 
 For payment and engagement event webhooks, send an `Idempotency-Key` header or a stable external event/payment id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second financial or event record.
 
@@ -198,14 +198,14 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Name | Method | Path | Purpose |
 | --- | --- | --- | --- |
 | Create Client | `POST` | `/api/webhooks/clients` | Create a client from a sale or enrollment event. |
-| Update Onboarding | `PATCH` | `/api/webhooks/clients/{clientId}/onboarding` | Move a client to an onboarding milestone and record metadata as an engagement event. |
-| Update Discord IDs | `PATCH` | `/api/webhooks/clients/{clientId}/discord` | Save the client's Discord channel and user IDs. |
-| Update Track | `PATCH` | `/api/webhooks/clients/{clientId}/track` | Assign the client to a dashboard track and group. |
-| Create Call | `POST` | `/api/webhooks/clients/{clientId}/calls` | Create a scheduled call record. |
+| Update Onboarding | `PATCH` | `/api/webhooks/contacts/{contactId}/onboarding` | Move a client to an onboarding milestone and record metadata as an engagement event. |
+| Update Discord IDs | `PATCH` | `/api/webhooks/contacts/{contactId}/discord` | Save the client's Discord channel and user IDs. |
+| Update Track | `PATCH` | `/api/webhooks/contacts/{contactId}/track` | Assign the client to a dashboard track and group. |
+| Create Call | `POST` | `/api/webhooks/contacts/{contactId}/calls` | Create a scheduled call record. |
 | Update Call | `PATCH` | `/api/webhooks/calls/{callId}` | Update a call after completion, no-show, cancellation, or rebooking. |
-| Create Payment | `POST` | `/api/webhooks/clients/{clientId}/payments` | Record a backend payment and recalculate remaining balance. |
-| Create Engagement Event | `POST` | `/api/webhooks/clients/{clientId}/engagement` | Log client activity or learning engagement. |
-| Create Development Document | `POST` | `/api/webhooks/clients/{clientId}/dev-docs` | Save an AI-generated or automation-generated development document. |
+| Create Payment | `POST` | `/api/webhooks/contacts/{contactId}/payments` | Record a backend payment and recalculate remaining balance. |
+| Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
+| Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 
 ## Endpoint Reference
 
@@ -244,6 +244,7 @@ Request body schema:
 | `remaining_balance` | money | No | Remaining balance at creation. |
 | `payment_plan` | string | No | Payment plan description. |
 | `context_notes` | string | No | Internal context notes. |
+| `development_doc_url` | URL | No | Link to the client's living Development Doc. |
 
 Default values set by the API:
 
@@ -251,7 +252,7 @@ Default values set by the API:
 | --- | --- |
 | `paymentStatus` | `INCOMPLETE` |
 | `track` | `BEGINNER` |
-| `groupAssignment` | `A` |
+| `groupAssignment` | `BEGINNER` |
 | `healthStatus` | `GREEN` |
 | `onboardingStatus` | `PAID` |
 
@@ -273,7 +274,8 @@ Example request:
   "cash_collected": "1000.00",
   "remaining_balance": "4000.00",
   "payment_plan": "4 monthly payments",
-  "context_notes": "Prefers evening calls."
+  "context_notes": "Prefers evening calls.",
+  "development_doc_url": "https://docs.google.com/document/d/example"
 }
 ```
 
@@ -288,10 +290,11 @@ Example success response, HTTP `201`:
     "name": "Jamie Rivera",
     "email": "jamie.rivera@example.com",
     "track": "BEGINNER",
-    "groupAssignment": "A",
+    "groupAssignment": "BEGINNER",
     "onboardingStatus": "PAID",
     "healthStatus": "GREEN",
     "remainingBalance": "4000",
+    "developmentDocUrl": "https://docs.google.com/document/d/example",
     "createdAt": "2026-05-01T10:00:02.000Z"
   }
 }
@@ -301,16 +304,16 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid date/money format, or unknown fields. |
+| `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid URL, invalid date/money format, or unknown fields. |
 | `409` | `Client already exists.` | Another client already uses the email or `contactid`. |
 | `500` | `Failed to create client.` | Unexpected database/server failure. |
 
-### PATCH /api/webhooks/clients/{clientId}/onboarding - Update Onboarding
+### PATCH /api/webhooks/contacts/{contactId}/onboarding - Update Onboarding
 
 Updates a client's onboarding status and creates an `ONBOARDING_MILESTONE` engagement event with optional metadata.
 
 ```http
-PATCH /api/webhooks/clients/{clientId}/onboarding
+PATCH /api/webhooks/contacts/{contactId}/onboarding
 ```
 
 Request body schema:
@@ -363,17 +366,17 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `milestone`, invalid `metadata`, or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `500` | `Failed to update client onboarding.` | Unexpected database/server failure. |
 
-### PATCH /api/webhooks/clients/{clientId}/discord - Update Discord IDs
+### PATCH /api/webhooks/contacts/{contactId}/discord - Update Discord IDs
 
 Stores Discord identifiers for a client.
 
 ```http
-PATCH /api/webhooks/clients/{clientId}/discord
+PATCH /api/webhooks/contacts/{contactId}/discord
 ```
 
 Request body schema:
@@ -410,18 +413,18 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/blank fields or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Discord identifier already exists.` | The channel ID or user ID is already assigned to another client. |
 | `500` | `Failed to update client Discord details.` | Unexpected database/server failure. |
 
-### PATCH /api/webhooks/clients/{clientId}/track - Update Track
+### PATCH /api/webhooks/contacts/{contactId}/track - Update Track
 
 Assigns a client to a track and group.
 
 ```http
-PATCH /api/webhooks/clients/{clientId}/track
+PATCH /api/webhooks/contacts/{contactId}/track
 ```
 
 Request body schema:
@@ -429,7 +432,7 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `track` | enum | Yes | One of `beginner`, `advanced`. |
-| `group_assignment` | enum | Yes | One of `A`, `B`. |
+| `group_assignment` | enum | Yes | One of `BEGINNER`, `ADVANCED`. |
 
 Track mapping:
 
@@ -443,7 +446,7 @@ Example request:
 ```json
 {
   "track": "beginner",
-  "group_assignment": "A"
+  "group_assignment": "BEGINNER"
 }
 ```
 
@@ -455,7 +458,7 @@ Example success response, HTTP `200`:
   "client": {
     "id": "clwclient123",
     "track": "BEGINNER",
-    "groupAssignment": "A",
+    "groupAssignment": "BEGINNER",
     "updatedAt": "2026-05-01T10:25:00.000Z"
   }
 }
@@ -465,17 +468,17 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid enum values or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `500` | `Failed to update client track.` | Unexpected database/server failure. |
 
-### POST /api/webhooks/clients/{clientId}/calls - Create Call
+### POST /api/webhooks/contacts/{contactId}/calls - Create Call
 
 Creates a scheduled call record for a client. The call starts with status `SCHEDULED`.
 
 ```http
-POST /api/webhooks/clients/{clientId}/calls
+POST /api/webhooks/contacts/{contactId}/calls
 ```
 
 Request body schema:
@@ -534,9 +537,9 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `call_type`, invalid date, non-positive `call_number`, or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Call already exists.` | Another call already uses `cal_com_event_id`. |
 | `500` | `Failed to create call.` | Unexpected database/server failure. |
 
@@ -555,7 +558,7 @@ Request body schema:
 | `status` | enum | Yes | One of `completed`, `no_show`, `cancelled`, `rebooked`. |
 | `happened_at` | ISO datetime | No | Actual call time with timezone. |
 | `recording_url` | string | No | Recording URL. |
-| `contact_id` | string | No | If set, the call must belong to this client (dashboard client id or CRM `contactid`). Omit to update by call id only. |
+| `contact_id` | string | No | If set, the call must belong to this client (GHL `contactid` or internal client id). Omit to update by call id only. |
 
 Status mapping:
 
@@ -577,7 +580,7 @@ Example request:
 }
 ```
 
-Omit `contact_id` when you only have the dashboard `call.id` from the create-call response. Include it when you want the server to reject the update if the call is not tied to that CRM contact or internal client id.
+Omit `contact_id` when you only have the dashboard `call.id` from the create-call response. Include it when you want the server to reject the update if the call is not tied to that contact.
 
 Example success response, HTTP `200`:
 
@@ -606,12 +609,12 @@ Endpoint-specific errors:
 | `404` | `Call not found or does not belong to the specified client.` | `contact_id` is set but no call matches both `{callId}` and that client. |
 | `500` | `Failed to update call.` | Unexpected database/server failure. |
 
-### POST /api/webhooks/clients/{clientId}/payments - Create Payment
+### POST /api/webhooks/contacts/{contactId}/payments - Create Payment
 
 Records a backend payment and recalculates the client's remaining balance.
 
 ```http
-POST /api/webhooks/clients/{clientId}/payments
+POST /api/webhooks/contacts/{contactId}/payments
 ```
 
 Request body schema:
@@ -673,18 +676,18 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing `amount` or `payment_date`, invalid money/date format, blank optional string, or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
 
-### POST /api/webhooks/clients/{clientId}/engagement - Create Engagement Event
+### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
 Logs a client activity event.
 
 ```http
-POST /api/webhooks/clients/{clientId}/engagement
+POST /api/webhooks/contacts/{contactId}/engagement
 ```
 
 Request body schema:
@@ -747,18 +750,18 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `event_type`, invalid `event_date`, invalid metadata, or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate engagement webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
 | `500` | `Failed to create engagement event.` | Unexpected database/server failure. |
 
-### POST /api/webhooks/clients/{clientId}/dev-docs - Create Development Document
+### POST /api/webhooks/contacts/{contactId}/dev-docs - Create Development Document
 
 Saves an AI-generated or automation-generated development document for a client. If `call_id` is included, the call must belong to the same client.
 
 ```http
-POST /api/webhooks/clients/{clientId}/dev-docs
+POST /api/webhooks/contacts/{contactId}/dev-docs
 ```
 
 Request body schema:
@@ -771,6 +774,7 @@ Request body schema:
 | `weeks_focus` | JSON | No | Structured focus areas for the week. |
 | `weeks_outcome` | JSON | No | Structured outcome or result data. |
 | `how` | JSON | No | Structured implementation plan or recommendations. |
+| `development_doc_url` | URL | No | Link to the client's living Development Doc. When present, updates the client profile link while creating this note snapshot. |
 
 Example request:
 
@@ -791,7 +795,8 @@ Example request:
       "Send follow-up within 5 minutes",
       "Complete two objection roleplays"
     ]
-  }
+  },
+  "development_doc_url": "https://docs.google.com/document/d/example"
 }
 ```
 
@@ -828,9 +833,9 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid client id.` | `{clientId}` is blank or invalid. |
-| `400` | `Invalid request payload.` | Missing/blank `week_label`, blank optional string, invalid JSON field, or unknown fields. |
-| `404` | `Client not found.` | No client exists for `{clientId}`. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
+| `400` | `Invalid request payload.` | Missing/blank `week_label`, blank optional string, invalid URL, invalid JSON field, or unknown fields. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `404` | `Call not found.` | `call_id` does not exist or belongs to a different client. |
 | `409` | `Development doc already exists for call.` | The provided `call_id` already has a development document. |
 | `500` | `Failed to create development doc.` | Unexpected database/server failure. |
@@ -853,10 +858,10 @@ curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients" \
   }'
 ```
 
-Create a call using the CRM contact ID:
+Create a call using the GHL contact ID:
 
 ```bash
-curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/clients/zMC7sAfinnBzqYy8n98V/calls" \
+curl -X POST "https://impact-dashboard.up.railway.app/api/webhooks/contacts/zMC7sAfinnBzqYy8n98V/calls" \
   -H "x-api-key: $IMPACT_DASHBOARD_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
@@ -878,4 +883,3 @@ curl -X PATCH "https://impact-dashboard.up.railway.app/api/webhooks/calls/clwcal
     "happened_at": "2026-05-03T09:04:00.000Z"
   }'
 ```
-
