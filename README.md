@@ -245,6 +245,7 @@ Request body schema:
 | `payment_plan` | string | No | Payment plan description. |
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
+| `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
 
 Default values set by the API:
 
