@@ -41,7 +41,7 @@ You only need the endpoints your automation actually produces; there is no requi
 ## Quickstart
 
 1. Get webhook credentials from the Impact Dashboard administrator.
-2. Send every request with `Content-Type: application/json` and **`Accept: application/json`**, then choose **either** signed webhook headers **or** the legacy `x-api-key` header (do not mix a partial set of signed headers with the legacy key).
+2. Send every request with `Content-Type: application/json`, **`Accept: application/json`**, and your **`x-api-key`**.
 3. Create a client with `POST /api/webhooks/clients`.
 4. Send a CRM `contactid` when creating the client.
 5. Use that same `contactid` as `{contactId}` in all contact-scoped endpoint paths.
@@ -58,36 +58,7 @@ All paths in this document are relative to this base URL. The same origin is def
 
 ## Authentication
 
-All endpoints require webhook credentials. Signed webhook headers are preferred for new integrations. The legacy shared API key remains supported for existing automations during migration.
-
-**Choosing a mode**
-
-- If you send **any** of `x-webhook-key-id`, `x-webhook-timestamp`, or `x-webhook-signature`, the server treats the request as **signed mode** and validates all required signed headers together. Missing pieces or a bad signature produce `401`.
-- Otherwise the server expects **`x-api-key`** (legacy).
-
-Preferred signed headers for every request:
-
-```http
-x-webhook-key-id: default
-x-webhook-timestamp: UNIX_TIMESTAMP_MS
-x-webhook-signature: HMAC_SHA256_HEX
-Content-Type: application/json
-Accept: application/json
-```
-
-**How the signature is computed**
-
-1. Take the **`x-webhook-timestamp`** value exactly as you will send it (digits only, Unix time in milliseconds).
-2. Take the **raw HTTP body** exactly as sent (same bytes as after `Content-Type: application/json`).
-3. Build one string: `timestamp + "." + rawBody` (one ASCII dot between them).
-4. Compute **HMAC-SHA256** of that string using the signing secret the operator shares with you (this is **`WEBHOOK_SIGNING_SECRET`** on the server).
-5. Send the digest as **lowercase hexadecimal** in `x-webhook-signature`.
-
-The server rejects requests whose timestamp is more than **five minutes** from server time.
-
-Every new integration uses **`x-webhook-key-id: default`** as in the preferred headers above. The operator configures **`WEBHOOK_SIGNING_SECRET`**; use that secret for the HMAC and keep it off the wire except in HTTPS headers described here.
-
-**Legacy `x-api-key`**
+All endpoints require an API key. Send it as the `x-api-key` header on every request.
 
 ```http
 x-api-key: API_KEY
@@ -95,7 +66,7 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-Do not send webhook secrets in query parameters or request bodies. Do not paste real credentials into documentation, screenshots, logs, or source code.
+Get your API key (`WEBHOOK_API_KEY`) from the Impact Dashboard administrator. Do not send API keys in query parameters or request bodies. Do not paste real credentials into documentation, screenshots, logs, or source code.
 
 **Network allowlists**
 
@@ -117,7 +88,7 @@ Authentication failures return HTTP `401`:
 }
 ```
 
-If your integration uses **`x-api-key`** (legacy) but the server operator has **not** set **`WEBHOOK_API_KEY`**, those requests receive HTTP **`401`** with the standard authentication error shape—the same **`401`** you get for a missing or incorrect key. Operators should configure **`WEBHOOK_API_KEY`** for legacy callers or migrate to signing with **`WEBHOOK_SIGNING_SECRET`** (above). Server logs may still record that **`WEBHOOK_API_KEY`** is unset when diagnosing failed deliveries.
+If the server operator has **not** set **`WEBHOOK_API_KEY`**, all requests receive HTTP **`401`**. Server logs may record that **`WEBHOOK_API_KEY`** is unset when diagnosing failed deliveries.
 
 ## Request Rules
 
@@ -870,7 +841,7 @@ Endpoint-specific errors:
 
 ## Curl Examples
 
-These examples use **`x-api-key`**. For signed webhooks, send **`x-webhook-key-id`**, **`x-webhook-timestamp`**, and **`x-webhook-signature`** as described under [Authentication](#authentication), and omit **`x-api-key`**.
+These examples use **`x-api-key`** for authentication.
 
 Create a client:
 
