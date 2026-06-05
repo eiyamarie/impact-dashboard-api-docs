@@ -148,7 +148,7 @@ All contact-scoped routes use a `{contactId}` path parameter. This accepts **eit
 | Status | Message | Meaning |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | JSON parsed but failed schema validation, or a path ID was blank/invalid. |
-| `401` | `Invalid webhook credentials.` | Missing or incorrect signed headers, wrong legacy **`x-api-key`**, or legacy mode used while **`WEBHOOK_API_KEY`** is unset on the server (see [Authentication](#authentication)). |
+| `401` | `Invalid webhook credentials.` | Missing or incorrect **`x-api-key`**, or **`WEBHOOK_API_KEY`** is unset on the server (see [Authentication](#authentication)). |
 | `403` | `Request origin not permitted.` | Caller IP not in the server's webhook IP allowlist (when configured). |
 | `404` | `Client not found.` | The `{contactId}` path parameter does not match a client by internal id or `contactid`. |
 | `404` | `Call not found.` | The `{callId}` path parameter or linked `call_id` does not match a call. |
