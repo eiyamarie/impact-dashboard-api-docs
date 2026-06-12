@@ -622,16 +622,17 @@ Request body schema:
 | --- | --- | --- | --- |
 | `external_payment_id` | string | No | Stable upstream payment id used to reject duplicate payment deliveries. |
 | `amount` | money | Yes | Payment amount received. |
-| `payment_date` | ISO datetime | Yes | Payment timestamp with timezone. |
-| `cash_collected` | money | No | Cash collected value to store on this payment and optionally update on the client. |
+| `payment_date` | ISO datetime | Yes | Payment timestamp with timezone. Must not be in the future (a 24-hour grace window absorbs timezone differences); future dates are rejected with `400`. |
+| `cash_collected` | money | No | Cash actually received on this payment (after fees). Drives the client's balance and payment status. |
 | `closer` | enum | No | Closer credited for the payment. One of `Sam`, `Dan`, `Hunter`, `Phillip`. |
 | `notes` | string | No | Payment notes. |
 
-Balance behavior:
+Balance behavior (recalculated from the full payment ledger on every delivery):
 
-- If the client has `contractValue`, remaining balance becomes `contractValue - sum(all payments)`, clamped to `0`.
-- If the client does not have `contractValue`, remaining balance becomes current `remainingBalance - amount`, clamped to `0`.
-- If `cash_collected` is provided, the client's `cashCollected` field is updated to that value.
+- The client's `cashCollected` becomes the sum of `cash_collected` across all of the client's payments.
+- If the client has `contractValue`, remaining balance becomes `contractValue - sum(cash_collected)`, clamped to `0`. When no payment on the ledger has a `cash_collected` value, the summed `amount` is used instead.
+- `paymentStatus` is derived from the same math: `OK` when the remaining balance reaches `0`, otherwise `INCOMPLETE`.
+- If the client does not have `contractValue`, remaining balance becomes current `remainingBalance - (cash_collected or amount)`, clamped to `0`.
 
 Example request:
 
@@ -676,7 +677,7 @@ Endpoint-specific errors:
 | Status | Message | When it happens |
 | --- | --- | --- |
 | `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
-| `400` | `Invalid request payload.` | Missing `amount` or `payment_date`, invalid money/date format, blank optional string, or unknown fields. |
+| `400` | `Invalid request payload.` | Missing `amount` or `payment_date`, invalid money/date format, a `payment_date` in the future, blank optional string, or unknown fields. |
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
