@@ -141,7 +141,7 @@ Validation error responses return HTTP `400`:
 
 ### Contact ID
 
-All contact-scoped routes use a `{contactId}` path parameter. This accepts **either** the GHL CRM `contactid` sent during client creation **or** the dashboard's internal client id (returned in the `id` field of the create-client response). Using the GHL `contactid` directly is the recommended approach for automations — there is no need to store or forward the internal id.
+All contact-scoped routes use a `{contactId}` path parameter. This accepts **either** the GHL CRM `contactid` sent during client creation **or** the dashboard's internal client id (returned in the `id` field of the create-client response). Using the GHL `contactid` directly is the recommended approach for automations - there is no need to store or forward the internal id.
 
 ### Common Errors
 
@@ -284,7 +284,7 @@ Endpoint-specific errors:
 
 Updates a client's onboarding status and creates an `ONBOARDING_MILESTONE` engagement event with optional metadata.
 
-**Call history side-effect:** Sending `call_booked` or `call_completed` also creates or updates a call record so the client appears in the Calls view — no separate call webhook required for the onboarding call.
+**Call history side-effect:** Sending `call_booked` or `call_completed` also creates or updates a call record so the client appears in the Calls view - no separate call webhook required for the onboarding call.
 
 - `call_booked` → creates an `ONBOARDING / SCHEDULED` call if one does not already exist.
 - `call_completed` → promotes the most recent `ONBOARDING / SCHEDULED` call to `COMPLETED`, or creates a new `ONBOARDING / COMPLETED` call if no scheduled record is found. Idempotent: a second `call_completed` for the same client does nothing if a completed call already exists.
@@ -297,7 +297,7 @@ Pass optional call details inside `metadata` to enrich the record:
 | `scheduled_at` | ISO datetime | Scheduled call time (used on `call_booked`). |
 | `happened_at` | ISO datetime | Actual call time (used on `call_completed`; defaults to now). |
 
-For richer call records — including Cal.com event IDs, recording URLs, transcripts, and AI summaries — use the dedicated `POST .../calls` and `PATCH /api/webhooks/calls/{callId}` endpoints alongside or instead of the milestone.
+For richer call records - including Cal.com event IDs, recording URLs, transcripts, and AI summaries - use the dedicated `POST .../calls` and `PATCH /api/webhooks/calls/{callId}` endpoints alongside or instead of the milestone.
 
 ```http
 PATCH /api/webhooks/contacts/{contactId}/onboarding
@@ -319,7 +319,7 @@ Milestone mapping:
 | `call_booked` | `CALL_BOOKED` |
 | `call_completed` | `CALL_COMPLETED` |
 
-Example request — booking an onboarding call:
+Example request - booking an onboarding call:
 
 ```json
 {
@@ -331,7 +331,7 @@ Example request — booking an onboarding call:
 }
 ```
 
-Example request — completing an onboarding call:
+Example request - completing an onboarding call:
 
 ```json
 {
