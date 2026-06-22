@@ -212,7 +212,7 @@ Request body schema:
 | `contract_value` | money | No | Total contract value. |
 | `revenue` | money | No | Revenue amount to display. |
 | `cash_collected` | money | No | Cash collected at sale. |
-| `remaining_balance` | money | No | Remaining balance at creation. |
+| `remaining_balance` | money | No | Accepted but not authoritative. The remaining balance is always computed as contract value minus cash collected, so a value sent here is ignored. |
 | `payment_plan` | string | No | Payment plan description. |
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
