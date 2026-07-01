@@ -175,6 +175,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Create Call | `POST` | `/api/webhooks/contacts/{contactId}/calls` | Create a scheduled call record. |
 | Update Call | `PATCH` | `/api/webhooks/calls/{callId}` | Update a call after completion, no-show, cancellation, or rebooking. |
 | Create Payment | `POST` | `/api/webhooks/contacts/{contactId}/payments` | Record a backend payment and recalculate remaining balance. |
+| Create B2B Company | `POST` | `/api/webhooks/b2b/clients` | Create a B2B company from the onboarding form and optionally pre-register its sales reps. Idempotent on `contactid`. |
 | Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the rep's email (upserted per rep per day). |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
@@ -684,6 +685,74 @@ Endpoint-specific errors:
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/b2b/clients - Create B2B Company
+
+Creates a B2B company from the onboarding form, and optionally pre-registers its sales reps in the same call (the form collects the company email and the reps' emails). Once a rep is registered, their daily submissions to the B2B EOD endpoint resolve by email immediately. Unlike the B2C sale webhook (`POST /api/webhooks/clients`), this seeds no payment, runs no balance reconcile, and fires no coaching workflows: a B2B company's revenue is rep activity reporting, not the payment ledger.
+
+```http
+POST /api/webhooks/b2b/clients
+```
+
+Behavior:
+
+- Idempotent on `contactid`: if a client already exists for that CRM contact id (or internal id) and is already B2B, it is refreshed (`200`); otherwise a new B2B client is created (`201`). A resubmission with the same reps refreshes the roster rather than erroring.
+- The new client is created with `clientType = B2B`, `onboardingStatus = CONTRACT_SIGNED`, and neutral defaults for the coaching fields (`track`/`groupAssignment = UNASSIGNED`, `healthStatus = GREEN`, `paymentStatus = OK`).
+- Each rep in `reps` is matched by email: a new email is created under this company; an email already registered to *this* company is reactivated; an email already registered to a *different* company is rejected (`409`), never silently moved (moving would misattribute that rep's historical numbers). The company write and all rep writes happen in one transaction, so a conflict rolls the whole call back. `repsRegistered` in the response counts newly created reps.
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `contactid` | string | Yes | CRM contact id for the company. Used to de-duplicate and to link later EOD/rep data. |
+| `name` | string | Yes | Company name. |
+| `email` | string | No | Business owner / company email (lowercased). Must be unique across clients. |
+| `phone` | string | No | Contact phone. |
+| `notes` | string | No | Internal context notes. |
+| `reps` | array | No | Sales reps to pre-register. Up to 100. Each item: `{ "name": string, "email": string }` (email lowercased; it is the key the EOD endpoint resolves on). |
+
+Example request:
+
+```json
+{
+  "contactid": "zMC7sAfinnBzqYy8n98V",
+  "name": "Acme Corp",
+  "email": "owner@acme.com",
+  "reps": [
+    { "name": "Jane Smith", "email": "jane@acme.com" },
+    { "name": "Raj Patel", "email": "raj@acme.com" }
+  ]
+}
+```
+
+Example success response, HTTP `201`:
+
+```json
+{
+  "success": true,
+  "client": {
+    "id": "clwclient123",
+    "contactId": "zMC7sAfinnBzqYy8n98V",
+    "name": "Acme Corp",
+    "email": "owner@acme.com",
+    "clientType": "B2B",
+    "createdAt": "2026-07-02T12:00:00.000Z",
+    "repsRegistered": 2
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `contactid` or `name`, an invalid `email`, or a `reps` entry missing a name / with an invalid email / beyond 100 items. Unknown extra fields are ignored, not rejected. |
+| `409` | `A non-B2B client already exists for this contact id. Convert it from the client page if this is intended.` | A client already exists for that `contactid` but is not B2B. It is not silently converted; use the in-dashboard client-type toggle instead. |
+| `409` | `A client with this email already exists.` | The company `email` is already used by a different client. |
+| `409` | `A client with this contact id already exists.` | A concurrent duplicate create raced for a new `contactid`. |
+| `409` | `These rep emails are already registered to another company: ...` | One or more `reps` emails already belong to a different company. The whole call is rolled back; fix the emails or move the rep from the dashboard. |
+| `409` | `One of the rep emails is already registered to another rep.` | A rep email hit the unique index during a concurrent write. |
+| `500` | `Failed to create B2B client.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/b2b/eod - Record B2B EOD
 
