@@ -175,6 +175,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Create Call | `POST` | `/api/webhooks/contacts/{contactId}/calls` | Create a scheduled call record. |
 | Update Call | `PATCH` | `/api/webhooks/calls/{callId}` | Update a call after completion, no-show, cancellation, or rebooking. |
 | Create Payment | `POST` | `/api/webhooks/contacts/{contactId}/payments` | Record a backend payment and recalculate remaining balance. |
+| Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the rep's email (upserted per rep per day). |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 
@@ -681,6 +682,79 @@ Endpoint-specific errors:
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/b2b/eod - Record B2B EOD
+
+Records one B2B sales rep's end-of-day numbers for a single day. This is the target for the daily EOD form each B2B client's sales reps fill out (wire your form tool or automation to POST here). The rep is identified by their email, so the form only needs the rep's email plus the day and numbers. It is activity reporting only: `revenue_generated` is **not** part of the client payment ledger and never affects `contractValue`, `cashCollected`, or `remainingBalance`.
+
+```http
+POST /api/webhooks/b2b/eod
+```
+
+Behavior:
+
+- The rep must be **pre-registered** under a B2B company in the dashboard (name + email). `rep_email` is matched to that rep (case-insensitive), which also determines the company. An unknown or deactivated email is rejected with `404` so numbers are never attributed to the wrong company or silently dropped.
+- Submissions are upserted by (rep, date): re-posting the same rep and `date` overwrites that day's numbers rather than duplicating them, so retries and corrections are safe. No `Idempotency-Key` header is needed.
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `rep_email` | string | Yes | The rep's registered email. Determines both the rep and their company. |
+| `date` | date | Yes | The EOD calendar date, `YYYY-MM-DD`. Must not be a future date (rejected with `400`). |
+| `calls_made` | integer | Yes | Calls made / outreach. Non-negative whole number. |
+| `conversations` | integer | Yes | Conversations / pickups. Non-negative whole number. |
+| `appointments_booked` | integer | Yes | Appointments booked. Non-negative whole number. |
+| `shows` | integer | Yes | Number of shows. Non-negative whole number. |
+| `closes` | integer | Yes | Number of closes. Non-negative whole number. |
+| `revenue_generated` | money | Yes | Revenue generated (dollars). Non-negative. Activity reporting only, not the payment ledger. |
+| `opportunities_pipeline` | integer | Yes | Opportunities in pipeline (count). Non-negative whole number. |
+
+Example request:
+
+```json
+{
+  "rep_email": "jane@acme.com",
+  "date": "2026-07-01",
+  "calls_made": 40,
+  "conversations": 12,
+  "appointments_booked": 5,
+  "shows": 3,
+  "closes": 2,
+  "revenue_generated": "4500.00",
+  "opportunities_pipeline": 8
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "eodSubmission": {
+    "id": "clweod123",
+    "clientId": "clwclient123",
+    "salesRepId": "clwrep123",
+    "submissionDate": "2026-07-01T00:00:00.000Z",
+    "callsMade": 40,
+    "conversations": 12,
+    "appointmentsBooked": 5,
+    "shows": 3,
+    "closes": 2,
+    "revenueGenerated": "4500",
+    "opportunitiesPipeline": 8
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing a required metric or `rep_email`, an invalid email, a negative or non-integer count, negative or out-of-range revenue, or a malformed / impossible `date`. Unknown extra fields are ignored, not rejected. |
+| `400` | `EOD date cannot be in the future.` | `date` is a later calendar day (UTC) than today. |
+| `404` | `Rep not found. Register this rep under a B2B company first.` | No active rep matches `rep_email`. |
+| `500` | `Failed to record EOD submission.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
