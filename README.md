@@ -218,6 +218,7 @@ Request body schema:
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
 | `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
+| `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. |
 
 Default values set by the API:
 
@@ -228,6 +229,7 @@ Default values set by the API:
 | `groupAssignment` | `BEGINNER` |
 | `healthStatus` | `GREEN` |
 | `onboardingStatus` | `PAID` |
+| `clientType` | `B2C` |
 
 Example request:
 
