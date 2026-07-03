@@ -93,7 +93,7 @@ If the server operator has **not** set **`WEBHOOK_API_KEY`**, all requests recei
 ## Request Rules
 
 - Request bodies must be valid JSON **objects** (not bare arrays or primitives).
-- **Extra JSON keys:** On `POST /api/webhooks/clients`, unknown keys are **ignored** (silently dropped). On **every other** webhook endpoint in this document, unknown keys cause **`400`** validation errors because schemas are strict.
+- **Extra JSON keys:** On `POST /api/webhooks/clients`, `POST /api/webhooks/b2b/clients`, and `POST /api/webhooks/b2b/eod`, unknown keys are **ignored** (silently dropped). On **every other** webhook endpoint in this document, unknown keys cause **`400`** validation errors because schemas are strict.
 - Required strings must be non-empty after trimming.
 - Optional string fields may be omitted, but if present must be non-empty after trimming.
 - Dates must be ISO 8601 datetimes with a timezone offset, for example `2026-05-01T10:00:00.000Z` or `2026-05-01T18:00:00+08:00`.
@@ -280,7 +280,7 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid URL, invalid date/money format, or unknown fields. |
+| `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid URL, or invalid date/money format. Unknown extra fields are ignored, not rejected. |
 | `409` | `Client already exists.` | Another client already uses the email or `contactid`. |
 | `500` | `Failed to create client.` | Unexpected database/server failure. |
 
