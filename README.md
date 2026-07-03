@@ -709,7 +709,7 @@ Request body schema:
 | `email` | string | No | Business owner / company email (lowercased). Must be unique across clients. |
 | `phone` | string | No | Contact phone. |
 | `notes` | string | No | Internal context notes. |
-| `reps` | array | No | Sales reps to pre-register. Up to 100. Each item: `{ "name": string, "email": string }` (email lowercased; it is the key the EOD endpoint resolves on). |
+| `reps` | array | No | Sales reps to pre-register. Up to 100. Each item requires only `email` (lowercased; it is the key the EOD endpoint resolves on); `name` is optional and defaults to the email's local part when omitted. So `{ "email": string }` or `{ "name": string, "email": string }`. |
 
 Example request:
 
@@ -720,7 +720,7 @@ Example request:
   "email": "owner@acme.com",
   "reps": [
     { "name": "Jane Smith", "email": "jane@acme.com" },
-    { "name": "Raj Patel", "email": "raj@acme.com" }
+    { "email": "raj@acme.com" }
   ]
 }
 ```
@@ -746,7 +746,7 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid request payload.` | Missing `contactid` or `name`, an invalid `email`, or a `reps` entry missing a name / with an invalid email / beyond 100 items. Unknown extra fields are ignored, not rejected. |
+| `400` | `Invalid request payload.` | Missing `contactid` or `name`, an invalid `email`, or a `reps` entry missing its email / with an invalid email / beyond 100 items. Unknown extra fields are ignored, not rejected. |
 | `409` | `A non-B2B client already exists for this contact id. Convert it from the client page if this is intended.` | A client already exists for that `contactid` but is not B2B. It is not silently converted; use the in-dashboard client-type toggle instead. |
 | `409` | `A client with this email already exists.` | The company `email` is already used by a different client. |
 | `409` | `A client with this contact id already exists.` | A concurrent duplicate create raced for a new `contactid`. |
