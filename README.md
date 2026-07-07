@@ -176,7 +176,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Update Call | `PATCH` | `/api/webhooks/calls/{callId}` | Update a call after completion, no-show, cancellation, or rebooking. |
 | Create Payment | `POST` | `/api/webhooks/contacts/{contactId}/payments` | Record a backend payment and recalculate remaining balance. |
 | Create B2B Company | `POST` | `/api/webhooks/b2b/clients` | Create a B2B company from the onboarding form and optionally pre-register its sales reps. Idempotent on `contactid`. |
-| Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the rep's email (upserted per rep per day). |
+| Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the company's `contactid` plus the rep's email (upserted per rep per day). |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 
@@ -688,7 +688,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/b2b/clients - Create B2B Company
 
-Creates a B2B company from the onboarding form, and optionally pre-registers its sales reps in the same call (the form collects the company email and the reps' emails). Once a rep is registered, their daily submissions to the B2B EOD endpoint resolve by email immediately. Unlike the B2C sale webhook (`POST /api/webhooks/clients`), this seeds no payment, runs no balance reconcile, and fires no coaching workflows: a B2B company's revenue is rep activity reporting, not the payment ledger.
+Creates a B2B company from the onboarding form, and optionally pre-registers its sales reps in the same call (the form collects the company email and the reps' emails). Once a rep is registered, their daily submissions to the B2B EOD endpoint resolve immediately by this company's `contactid` plus their email. Unlike the B2C sale webhook (`POST /api/webhooks/clients`), this seeds no payment, runs no balance reconcile, and fires no coaching workflows: a B2B company's revenue is rep activity reporting, not the payment ledger.
 
 ```http
 POST /api/webhooks/b2b/clients
@@ -698,7 +698,7 @@ Behavior:
 
 - Idempotent on `contactid`: if a client already exists for that CRM contact id (or internal id) and is already B2B, it is refreshed (`200`); otherwise a new B2B client is created (`201`). A resubmission with the same reps refreshes the roster rather than erroring.
 - The new client is created with `clientType = B2B`, `onboardingStatus = CONTRACT_SIGNED`, and neutral defaults for the coaching fields (`track`/`groupAssignment = UNASSIGNED`, `healthStatus = GREEN`, `paymentStatus = OK`).
-- Each rep in `reps` is matched by email: a new email is created under this company; an email already registered to *this* company is reactivated; an email already registered to a *different* company is rejected (`409`), never silently moved (moving would misattribute that rep's historical numbers). The company write and all rep writes happen in one transaction, so a conflict rolls the whole call back. `repsRegistered` in the response counts newly created reps.
+- Each rep in `reps` is matched by email within this company: an email already registered to *this* company is reactivated (idempotent re-submit); any other email is created as a **new** rep row under this company, even if that email already belongs to a different company. Rep email is unique per company, not globally, so the same person can be a rep at more than one B2B company (one `SalesRep` row per company, same email); registering them elsewhere never moves or overwrites their other company's rep row or historical numbers. The company write and all rep writes happen in one transaction, so a conflict rolls the whole call back. `repsRegistered` in the response counts newly created reps.
 
 Request body schema:
 
@@ -709,7 +709,7 @@ Request body schema:
 | `email` | string | No | Business owner / company email (lowercased). Must be unique across clients. |
 | `phone` | string | No | Contact phone. |
 | `notes` | string | No | Internal context notes. |
-| `reps` | array | No | Sales reps to pre-register. Up to 100. Each item requires only `email` (lowercased; it is the key the EOD endpoint resolves on); `name` is optional and defaults to the email's local part when omitted. So `{ "email": string }` or `{ "name": string, "email": string }`. |
+| `reps` | array | No | Sales reps to pre-register. Up to 100. Each item requires only `email` (lowercased; combined with this company's `contactid`, it is the key the EOD endpoint resolves on); `name` is optional and defaults to the email's local part when omitted. So `{ "email": string }` or `{ "name": string, "email": string }`. |
 
 Example request:
 
@@ -750,13 +750,14 @@ Endpoint-specific errors:
 | `409` | `A non-B2B client already exists for this contact id. Convert it from the client page if this is intended.` | A client already exists for that `contactid` but is not B2B. It is not silently converted; use the in-dashboard client-type toggle instead. |
 | `409` | `A client with this email already exists.` | The company `email` is already used by a different client. |
 | `409` | `A client with this contact id already exists.` | A concurrent duplicate create raced for a new `contactid`. |
-| `409` | `These rep emails are already registered to another company: ...` | One or more `reps` emails already belong to a different company. The whole call is rolled back; fix the emails or move the rep from the dashboard. |
-| `409` | `One of the rep emails is already registered to another rep.` | A rep email hit the unique index during a concurrent write. |
+| `409` | `One of the rep emails is already registered under this company.` | A rep email hit this company's unique (`clientId`, `email`) index during a concurrent write. A rep email that already belongs to a *different* company is not a conflict; it creates a second rep row for this company. |
 | `500` | `Failed to create B2B client.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/b2b/eod - Record B2B EOD
 
-Records one B2B sales rep's end-of-day numbers for a single day. This is the target for the daily EOD form each B2B client's sales reps fill out (wire your form tool or automation to POST here). The rep is identified by their email, so the form only needs the rep's email plus the day and numbers. It is activity reporting only: `revenue_generated` is **not** part of the client payment ledger and never affects `contractValue`, `cashCollected`, or `remainingBalance`.
+Records one B2B sales rep's end-of-day numbers for a single day. This is the target for the daily EOD form each B2B client's sales reps fill out (wire your form tool or automation to POST here). The rep is resolved by the company's `contactid` plus their email, so the form needs the company's `contactid`, the rep's email, and the day's numbers. It is activity reporting only: `revenue_generated` is **not** part of the client payment ledger and never affects `contractValue`, `cashCollected`, or `remainingBalance`.
+
+**Breaking change:** `contactid` is now a **required** field on this endpoint. Rep email is unique per B2B company, not globally (the same person can be a rep at more than one company), so a submission that identifies the rep by email alone is no longer enough to resolve which company's rep to credit. Form tools and automations that only send `rep_email` must be updated to also send the company's `contactid`, or submissions will be rejected with `400`.
 
 ```http
 POST /api/webhooks/b2b/eod
@@ -764,14 +765,15 @@ POST /api/webhooks/b2b/eod
 
 Behavior:
 
-- The rep must be **pre-registered** under a B2B company in the dashboard (name + email). `rep_email` is matched to that rep (case-insensitive), which also determines the company. An unknown or deactivated email is rejected with `404` so numbers are never attributed to the wrong company or silently dropped.
+- The rep must be **pre-registered** under a B2B company in the dashboard (name + email). The company is resolved first by `contactid` (the CRM `contactid` or the dashboard's internal client id); then `rep_email` is matched to a rep under that company (case-insensitive). An unknown `contactid`, or an email with no matching (or deactivated) rep under that company, is rejected with `404` so numbers are never attributed to the wrong company or silently dropped.
 - Submissions are upserted by (rep, date): re-posting the same rep and `date` overwrites that day's numbers rather than duplicating them, so retries and corrections are safe. No `Idempotency-Key` header is needed.
 
 Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `rep_email` | string | Yes | The rep's registered email. Determines both the rep and their company. |
+| `contactid` | string | Yes | CRM contact id of the company the rep is reporting for. Accepts the GHL contactid or the dashboard's internal client id. |
+| `rep_email` | string | Yes | The rep's registered email, scoped to the company identified by `contactid` (email is unique per company, not globally). |
 | `date` | date | Yes | The EOD calendar date, `YYYY-MM-DD`. Must not be a future date (rejected with `400`). |
 | `calls_made` | integer | Yes | Calls made / outreach. Non-negative whole number. |
 | `conversations` | integer | Yes | Conversations / pickups. Non-negative whole number. |
@@ -785,6 +787,7 @@ Example request:
 
 ```json
 {
+  "contactid": "zMC7sAfinnBzqYy8n98V",
   "rep_email": "jane@acme.com",
   "date": "2026-07-01",
   "calls_made": 40,
@@ -822,9 +825,10 @@ Endpoint-specific errors:
 
 | Status | Message | When it happens |
 | --- | --- | --- |
-| `400` | `Invalid request payload.` | Missing a required metric or `rep_email`, an invalid email, a negative or non-integer count, negative or out-of-range revenue, or a malformed / impossible `date`. Unknown extra fields are ignored, not rejected. |
+| `400` | `Invalid request payload.` | Missing `contactid`, a required metric, or `rep_email`, an invalid email, a negative or non-integer count, negative or out-of-range revenue, or a malformed / impossible `date`. Unknown extra fields are ignored, not rejected. |
 | `400` | `EOD date cannot be in the future.` | `date` is a later calendar day (UTC) than today. |
-| `404` | `Rep not found. Register this rep under a B2B company first.` | No active rep matches `rep_email`. |
+| `404` | `Company not found for that contactid.` | No B2B client matches `contactid` (by internal id or CRM contact id). |
+| `404` | `Rep not found. Register this rep under this B2B company first.` | The company was found, but no active rep under it matches `rep_email`. Since email is unique per company (not globally), the same email may exist as a rep at a different company without matching here. |
 | `500` | `Failed to record EOD submission.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
