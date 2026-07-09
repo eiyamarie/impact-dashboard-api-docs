@@ -706,7 +706,8 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `contactid` | string | Yes | CRM contact id for the company. Used to de-duplicate and to link later EOD/rep data. |
-| `name` | string | Yes | Company name. |
+| `name` | string | Yes | Company name. If your automation can only map the CRM contact's personal name here, send the business name in `company_name` and it takes precedence. |
+| `company_name` / `business_name` | string | No | Explicit business name. When present, it overrides `name` as the stored company name (`company_name` wins if both are sent). Send this when the CRM maps a contact person into `name`. Repeat deliveries with this field also correct an existing company's name. If sent, it must be non-empty after trimming: a blank value is a `400`, not a fallback to `name`, so omit the key when the CRM field is empty. |
 | `email` | string | No | Primary business owner / company email (lowercased). Stored on the company and must be unique across clients. Also receives an app invite on first creation. |
 | `ownerEmails` / `owner_emails` | array or string | No | Additional company-owner login emails to invite on first creation. Up to 100. Accepts an array of emails or one comma/semicolon/newline-separated string. These emails are lowercased, deduped with `email`, and are not stored on the company row. |
 | `phone` | string | No | Contact phone. |
@@ -718,7 +719,8 @@ Example request:
 ```json
 {
   "contactid": "zMC7sAfinnBzqYy8n98V",
-  "name": "Acme Corp",
+  "name": "Jamie Rivera",
+  "company_name": "Acme Corp",
   "email": "owner@acme.com",
   "ownerEmails": ["finance@acme.com", "ops@acme.com", "ceo@acme.com"],
   "reps": [
