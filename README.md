@@ -206,7 +206,7 @@ Request body schema:
 | `name` | string | Yes | Client full name. |
 | `email` | string | Yes | Client email. Lowercased and validated as an email address. Must be unique. |
 | `phone` | string | No | Client phone number. |
-| `program` | enum | No | One of `Platinum`, `Platinum Upsell (The House)`. |
+| `program` | string | No | Program name as sold (e.g. `Platinum`, `Platinum Upsell (The House)`, `VIP Plus+`, `B2B Package`). Free-form: new program names are accepted without an API change. |
 | `lead_source` | enum | No | One of `Referral / Other`, `Outbound`, `VIP Onboarding`, `Application Lead`, `Discord DM's`, `Offer Placement Call`. |
 | `closer` | enum | No | One of `Sam`, `Dan`, `Hunter`, `Phillip`. |
 | `setter` | enum | No | One of `Sam`, `Dan`, `Hunter`, `Phillip`. |
@@ -219,7 +219,7 @@ Request body schema:
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
 | `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
-| `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. The dashboard displays `B2C` as "Platinum". |
+| `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. The dashboard displays `B2C` as "Individual". |
 
 Default values set by the API:
 
@@ -688,7 +688,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/b2b/clients - Create B2B Company
 
-Creates a B2B company from the onboarding form, and optionally pre-registers its sales reps in the same call (the form collects the company email and the reps' emails). Once a rep is registered, their daily submissions to the B2B EOD endpoint resolve immediately by this company's `contactid` plus their email. Unlike the B2C sale webhook (`POST /api/webhooks/clients`), this seeds no payment, runs no balance reconcile, and fires no coaching workflows: a B2B company's revenue is rep activity reporting, not the payment ledger.
+Creates a B2B company from the onboarding form, optionally invites company-owner emails as company-scoped dashboard users, and optionally pre-registers its sales reps in the same call. Once a rep is registered, their daily submissions to the B2B EOD endpoint resolve immediately by this company's `contactid` plus their email. Unlike the B2C sale webhook (`POST /api/webhooks/clients`), this seeds no payment, runs no balance reconcile, and fires no coaching workflows: a B2B company's revenue is rep activity reporting, not the payment ledger.
 
 ```http
 POST /api/webhooks/b2b/clients
@@ -699,7 +699,7 @@ Behavior:
 - Idempotent on `contactid`: if a client already exists for that CRM contact id (or internal id) and is already B2B, it is refreshed (`200`); otherwise a new B2B client is created (`201`). A resubmission with the same reps refreshes the roster rather than erroring.
 - The new client is created with `clientType = B2B`, `onboardingStatus = CONTRACT_SIGNED`, and neutral defaults for the coaching fields (`track`/`groupAssignment = UNASSIGNED`, `healthStatus = GREEN`, `paymentStatus = OK`).
 - Each rep in `reps` is matched by email within this company: an email already registered to *this* company is reactivated (idempotent re-submit); any other email is created as a **new** rep row under this company, even if that email already belongs to a different company. Rep email is unique per company, not globally, so the same person can be a rep at more than one B2B company (one `SalesRep` row per company, same email); registering them elsewhere never moves or overwrites their other company's rep row or historical numbers. The company write and all rep writes happen in one transaction, so a conflict rolls the whole call back. `repsRegistered` in the response counts newly created reps.
-- On **first creation** of a company that includes an `email`, an app invite (a "set your password" link) is sent to that **company email** automatically, never to a rep's email. Repeat deliveries (same `contactid`) update the company and never re-invite, and if the company email is already a login no second invite is sent. The invite is best-effort and does not change the response: creation still returns `201` even if the invite email fails. Disable globally with `B2B_AUTO_INVITE=off`.
+- On **first creation** of a company, app invites ("set your password" links) are sent to the primary `email` and every address in `ownerEmails` / `owner_emails` automatically, never to a rep's email. Repeat deliveries (same `contactid`) update the company and never re-invite, and if an owner email is already a login no second invite is sent. Invites are best-effort and do not change the response: creation still returns `201` even if an invite email fails. Disable globally with `B2B_AUTO_INVITE=off`.
 
 Request body schema:
 
@@ -707,7 +707,8 @@ Request body schema:
 | --- | --- | --- | --- |
 | `contactid` | string | Yes | CRM contact id for the company. Used to de-duplicate and to link later EOD/rep data. |
 | `name` | string | Yes | Company name. |
-| `email` | string | No | Business owner / company email (lowercased). Must be unique across clients. |
+| `email` | string | No | Primary business owner / company email (lowercased). Stored on the company and must be unique across clients. Also receives an app invite on first creation. |
+| `ownerEmails` / `owner_emails` | array or string | No | Additional company-owner login emails to invite on first creation. Up to 100. Accepts an array of emails or one comma/semicolon/newline-separated string. These emails are lowercased, deduped with `email`, and are not stored on the company row. |
 | `phone` | string | No | Contact phone. |
 | `notes` | string | No | Internal context notes. |
 | `reps` | array | No | Sales reps to pre-register. Up to 100. Each item requires only `email` (lowercased; combined with this company's `contactid`, it is the key the EOD endpoint resolves on); `name` is optional and defaults to the email's local part when omitted. So `{ "email": string }` or `{ "name": string, "email": string }`. |
@@ -719,6 +720,7 @@ Example request:
   "contactid": "zMC7sAfinnBzqYy8n98V",
   "name": "Acme Corp",
   "email": "owner@acme.com",
+  "ownerEmails": ["finance@acme.com", "ops@acme.com", "ceo@acme.com"],
   "reps": [
     { "name": "Jane Smith", "email": "jane@acme.com" },
     { "email": "raj@acme.com" }
