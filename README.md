@@ -182,9 +182,13 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 
 ## Endpoint Reference
 
-### POST /api/webhooks/clients - Create Client
+### POST /api/webhooks/clients - Create or Update Client (sale event)
 
-Creates a new dashboard client from a sale or enrollment event. Extra JSON keys in the body are **ignored** on this route only.
+Creates a dashboard client from a sale or enrollment event. Extra JSON keys in the body are **ignored** on this route only.
+
+**Repeat sales (upsells):** when a client with the same `contactid` or `email` already exists (the `contactid` match wins when they differ), the call is an update, not a conflict, returning HTTP `200` with `"updated": true` instead of `201`. Fields present in the payload (name, phone, program, lead source, closer/setter, sale date, revenue, payment plan, notes, doc URL, pod types, client type) replace the stored values; omitted fields are preserved. `contract_value` is **added** to the existing contract value (a second sale increases what the client owes; sending a cumulative figure would double-count). A missing `contactid` link is filled in; an existing different link is never overwritten. Email is never changed by this route.
+
+**Redelivery safety:** send an `Idempotency-Key` header to have an exact replay rejected with `409 Duplicate sale webhook.` Without a key, a redelivered sale that carries `revenue` (plus optionally `cash_collected`) **and** `sale_date` is detected through the seed payment the first delivery created (same cash, identical `sale_date`), and neither accumulates the contract again nor re-seeds. This key-less detection has limits: it does not cover a sale without `revenue` and `sale_date`, and it lapses once the seed has been claimed by a payment delivery that carried an `external_payment_id` (the claim replaces the seed's identifying id). Senders that retry must supply the `Idempotency-Key` header; the seed-based detection is a fallback, not the contract. The new sale's payment is seeded **unless** a payment with exactly the same cash already exists within 7 days: the back-end form may record the same money in either order, so an unrelated identical-cash payment inside that window (for example equal weekly installments) suppresses the seed until the payment webhook records it.
 
 ```http
 POST /api/webhooks/clients
@@ -271,7 +275,8 @@ Example success response, HTTP `201`:
     "healthStatus": "GREEN",
     "remainingBalance": "4000",
     "developmentDocUrl": "https://docs.google.com/document/d/example",
-    "createdAt": "2026-05-01T10:00:02.000Z"
+    "createdAt": "2026-05-01T10:00:02.000Z",
+    "updated": false
   }
 }
 ```
@@ -281,7 +286,7 @@ Endpoint-specific errors:
 | Status | Message | When it happens |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | Missing `contactid`, `name`, or `email`, invalid email, invalid URL, or invalid date/money format. Unknown extra fields are ignored, not rejected. |
-| `409` | `Client already exists.` | Another client already uses the email or `contactid`. |
+| `409` | `Client already exists.` | Only reachable through a race between two concurrent creates; a repeat sale for an existing client is handled as an update (`200`), not a conflict. |
 | `500` | `Failed to create client.` | Unexpected database/server failure. |
 
 ### PATCH /api/webhooks/contacts/{contactId}/onboarding - Update Onboarding
@@ -616,6 +621,8 @@ Endpoint-specific errors:
 
 Records a backend payment and recalculates the client's remaining balance.
 
+**Sale-seed merging:** a sale webhook (`POST /api/webhooks/clients`) with `cash_collected` seeds a ledger payment for that sale. When this endpoint later receives a payment with exactly the same cash within 7 days of an unclaimed seed, the delivery is treated as the back-end recording of that same money: the seed is updated in place (date, closer, notes, external id) instead of a duplicate being created, and the response is HTTP `200` (not `201`) with `"merged_into_sale_seed": true`. Each seed can be claimed at most once; a later payment with the same cash creates a new ledger row as normal. Deliveries that hit different sale seeds, or arrive outside the window, behave exactly as before. Concurrent delivery of the sale webhook and the matching payment webhook (within the same second) can bypass the merge and record the money twice; sequence the two calls in the sender when both are emitted.
+
 ```http
 POST /api/webhooks/contacts/{contactId}/payments
 ```
@@ -624,7 +631,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `external_payment_id` | string | No | Stable upstream payment id used to reject duplicate payment deliveries. |
+| `external_payment_id` | string | No | Stable upstream payment id used to reject duplicate payment deliveries. Must not start with `sale:` (reserved for sale-seed payments); such values are rejected with `400`. |
 | `amount` | money | Yes | Payment amount received. |
 | `payment_date` | ISO datetime | Yes | Payment timestamp with timezone. Must not be in the future (a 24-hour grace window absorbs timezone differences); future dates are rejected with `400`. |
 | `cash_collected` | money | No | Cash actually received on this payment (after fees). Drives the client's balance and payment status. |
