@@ -1,6 +1,6 @@
 # Impact Dashboard API
 
-Public API documentation for automation systems that create and update client records, calls, payments, engagement events, onboarding milestones, Discord IDs, track assignments, and development documents in Impact Dashboard.
+Public API documentation for automation systems that create and update client records, calls, payments, engagement events, onboarding milestones, Discord IDs, track assignments, development documents, and 1-on-1 booking requests in Impact Dashboard.
 
 ## Contents
 
@@ -179,6 +179,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the company's `contactid` plus the rep's email (upserted per rep per day). |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
+| Create 1-on-1 Booking Request | `POST` | `/api/webhooks/contacts/{contactId}/one-on-one-requests` | Store a client's 1-on-1 booking form submission for operator approval or denial. |
 
 ## Endpoint Reference
 
@@ -1000,6 +1001,92 @@ Endpoint-specific errors:
 | `404` | `Call not found.` | `call_id` does not exist or belongs to a different client. |
 | `409` | `Development doc already exists for call.` | The provided `call_id` already has a development document. |
 | `500` | `Failed to create development doc.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/contacts/{contactId}/one-on-one-requests - Create 1-on-1 Booking Request
+
+Stores a client's 1-on-1 booking form submission (the Google Form for the 2nd, 3rd, and 4th 1-on-1 calls) so an operator can approve or deny it on the client's profile. Posting to Discord is the sender's job; this endpoint only records the request in the dashboard. On approval the dashboard mints a single-use Cal.com booking link and (when configured) pushes the decision to the outbound decision webhook described below; the booked call should then be recorded through the existing `POST /api/webhooks/contacts/{contactId}/calls` endpoint with `call_type: one_on_one`, which is what the profile's 1-on-1 counter is derived from.
+
+```http
+POST /api/webhooks/contacts/{contactId}/one-on-one-requests
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `answers` | JSON | Yes | The form submission as question/answer data: a non-empty object keyed by question, or a non-empty array of `{ "question", "answer" }` pairs. Free-form so the form can change without an API change. |
+| `submitted_at` | ISO datetime | No | When the form was submitted. Defaults to the time of delivery. |
+| `event_id` | string | No | Stable submission id from the form tool. Used for duplicate rejection like an `Idempotency-Key` header. |
+
+Example request:
+
+```json
+{
+  "answers": {
+    "What do you want to cover?": "Objection handling on discovery calls",
+    "What have you tried so far?": "Roleplays from module 3",
+    "Preferred days": "Tuesday or Thursday"
+  },
+  "submitted_at": "2026-07-17T14:30:00.000Z",
+  "event_id": "form_response_8842"
+}
+```
+
+Example success response, HTTP `201`:
+
+```json
+{
+  "success": true,
+  "request": {
+    "id": "clwreq123",
+    "clientId": "clwclient123",
+    "answers": {
+      "What do you want to cover?": "Objection handling on discovery calls",
+      "What have you tried so far?": "Roleplays from module 3",
+      "Preferred days": "Tuesday or Thursday"
+    },
+    "submittedAt": "2026-07-17T14:30:00.000Z",
+    "status": "PENDING",
+    "createdAt": "2026-07-17T14:30:02.000Z"
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
+| `400` | `Invalid request payload.` | Missing or empty `answers`, invalid `submitted_at`, or unknown fields. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
+| `409` | `Duplicate one-on-one request webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
+| `500` | `Failed to create one-on-one request.` | Unexpected database/server failure. |
+
+#### Outbound decision webhook
+
+When an operator approves or denies a request, the dashboard POSTs a JSON body to the URL in the server's `ONE_ON_ONE_DECISION_WEBHOOK_URL` environment variable (HTTPS, public host; delivery is fire-and-forget and logged in the dashboard's outbound webhook log). If the variable is unset, decisions still save and the operator is told no notification was sent. The receiving automation is responsible for delivering the outcome to the client (for example a Discord DM or channel message).
+
+```json
+{
+  "event": "one_on_one_request.decided",
+  "request_id": "clwreq123",
+  "status": "approved",
+  "client": {
+    "id": "clwclient123",
+    "name": "Jamie Rivera",
+    "email": "jamie.rivera@example.com",
+    "contactid": "zMC7sAfinnBzqYy8n98V",
+    "discord_channel_id": "123456789012345678",
+    "discord_user_id": "987654321098765432"
+  },
+  "booking_url": "https://cal.com/d/abc123def456",
+  "denial_notes": null,
+  "decided_by": "Elle",
+  "decided_at": "2026-07-17T15:00:00.000Z"
+}
+```
+
+`status` is `approved` or `denied`. `booking_url` is the single-use Cal.com link on approval and `null` on denial; `denial_notes` is the operator's explanation on denial and `null` on approval.
 
 ## Curl Examples
 
