@@ -1004,7 +1004,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/one-on-one-requests - Create 1-on-1 Booking Request
 
-Stores a client's 1-on-1 booking form submission (the Google Form for the 2nd, 3rd, and 4th 1-on-1 calls) so an operator can approve or deny it on the client's profile. Posting to Discord is the sender's job; this endpoint only records the request in the dashboard. On approval the dashboard mints a single-use Cal.com booking link and (when configured) pushes the decision to the outbound decision webhook described below; the booked call should then be recorded through the existing `POST /api/webhooks/contacts/{contactId}/calls` endpoint with `call_type: one_on_one`, which is what the profile's 1-on-1 counter is derived from.
+Stores a client's 1-on-1 booking form submission (the Google Form for the 2nd, 3rd, and 4th 1-on-1 calls) so an operator can approve or deny it on the client's profile. Each stored request also sends an in-app notification linking straight to the request card, targeted at the operators in the server's `ONE_ON_ONE_NOTIFY_EMAILS` (falling back to all admins when unset). Posting to Discord is the sender's job; this endpoint only records the request in the dashboard. On approval the dashboard mints a single-use Cal.com booking link and (when configured) pushes the decision to the outbound decision webhook described below; the booked call should then be recorded through the existing `POST /api/webhooks/contacts/{contactId}/calls` endpoint with `call_type: one_on_one`, which is what the profile's 1-on-1 counter is derived from.
 
 ```http
 POST /api/webhooks/contacts/{contactId}/one-on-one-requests
