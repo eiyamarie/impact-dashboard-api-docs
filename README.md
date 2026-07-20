@@ -187,7 +187,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 
 Creates a dashboard client from a sale or enrollment event. Extra JSON keys in the body are **ignored** on this route only.
 
-**Repeat sales (upsells):** when a client with the same `contactid` or `email` already exists (the `contactid` match wins when they differ), the call is an update, not a conflict, returning HTTP `200` with `"updated": true` instead of `201`. Fields present in the payload (name, phone, program, lead source, closer/setter, sale date, revenue, payment plan, notes, doc URL, pod types, client type) replace the stored values; omitted fields are preserved. `contract_value` is **added** to the existing contract value (a second sale increases what the client owes; sending a cumulative figure would double-count). A missing `contactid` link is filled in; an existing different link is never overwritten. Email is never changed by this route.
+**Repeat sales (upsells):** when a client with the same `contactid` or `email` already exists (the `contactid` match wins when they differ), the call is an update, not a conflict, returning HTTP `200` with `"updated": true` instead of `201`. Fields present in the payload (name, phone, program, lead source, closer/setter, sale date, revenue, payment plan, notes, doc URL, agreement URL, pod types, client type) replace the stored values; omitted fields are preserved. `contract_value` is **added** to the existing contract value (a second sale increases what the client owes; sending a cumulative figure would double-count). A missing `contactid` link is filled in; an existing different link is never overwritten. Email is never changed by this route.
 
 **Redelivery safety:** send an `Idempotency-Key` header to have an exact replay rejected with `409 Duplicate sale webhook.` Without a key, a redelivered sale that carries `revenue` (plus optionally `cash_collected`) **and** `sale_date` is detected through the seed payment the first delivery created (same cash, identical `sale_date`), and neither accumulates the contract again nor re-seeds. This key-less detection has limits: it does not cover a sale without `revenue` and `sale_date`, and it lapses once the seed has been claimed by a payment delivery that carried an `external_payment_id` (the claim replaces the seed's identifying id). Senders that retry must supply the `Idempotency-Key` header; the seed-based detection is a fallback, not the contract. The new sale's payment is seeded **unless** a payment with exactly the same cash already exists within 7 days: the back-end form may record the same money in either order, so an unrelated identical-cash payment inside that window (for example equal weekly installments) suppresses the seed until the payment webhook records it.
 
@@ -223,6 +223,7 @@ Request body schema:
 | `payment_plan` | string | No | Payment plan description. |
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
+| `signed_agreement_url` | URL | No | Link to the client's signed PandaDoc agreement. Sent once the client has completed/signed the document. Like `development_doc_url`, omitting it on a later update preserves the stored value. |
 | `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
 | `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. The dashboard displays `B2C` as "Individual". |
 
@@ -256,7 +257,8 @@ Example request:
   "remaining_balance": "4000.00",
   "payment_plan": "4 monthly payments",
   "context_notes": "Prefers evening calls.",
-  "development_doc_url": "https://docs.google.com/document/d/example"
+  "development_doc_url": "https://docs.google.com/document/d/example",
+  "signed_agreement_url": "https://app.pandadoc.com/document/abc123"
 }
 ```
 
