@@ -1,6 +1,6 @@
 # Impact Dashboard API
 
-Public API documentation for automation systems that create and update client records, calls, payments, engagement events, onboarding milestones, Discord IDs, track assignments, development documents, and 1-on-1 booking requests in Impact Dashboard.
+Public API documentation for automation systems that create and update client records, calls, payments, engagement events, onboarding milestones, placement stages, Discord IDs, track assignments, development documents, and 1-on-1 booking requests in Impact Dashboard.
 
 ## Contents
 
@@ -162,7 +162,7 @@ Webhook routes may return HTTP **`429`** with `Too many requests.` when a caller
 
 In **this repository**, those limits are enforced in **`proxy.ts`** at the project root (Next.js 16's proxy hook convention; **`middleware.ts`** is not used). Paths under **`/api/auth`** share a tighter per-IP limit for abuse protection.
 
-For payment and engagement event webhooks, send an `Idempotency-Key` header or a stable external event/payment id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second financial or event record.
+For payment, engagement, and placement survey webhooks, send an `Idempotency-Key` header or a stable external event/payment/survey id in the request body where documented. Replays with the same key are rejected as duplicates instead of creating a second record.
 
 ## Endpoint Summary
 
@@ -178,6 +178,7 @@ For payment and engagement event webhooks, send an `Idempotency-Key` header or a
 | Create B2B Company | `POST` | `/api/webhooks/b2b/clients` | Create a B2B company from the onboarding form and optionally pre-register its sales reps. Idempotent on `contactid`. |
 | Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the company's `contactid` plus the rep's email (upserted per rep per day). |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
+| Update Placement | `POST` | `/api/webhooks/contacts/{contactId}/placement` | Sync a client's placement stage from a monthly survey. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 | Create 1-on-1 Booking Request | `POST` | `/api/webhooks/contacts/{contactId}/one-on-one-requests` | Store a client's 1-on-1 booking form submission for operator approval or denial. |
 
@@ -920,6 +921,48 @@ Endpoint-specific errors:
 | `409` | `Duplicate engagement webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
 | `500` | `Failed to create engagement event.` | Unexpected database/server failure. |
 
+### POST /api/webhooks/contacts/{contactId}/placement - Update Placement
+
+Syncs an active individual client's placement stage from a monthly survey. The
+survey response id is required and idempotent. A delayed survey whose
+`submitted_at` predates the client's latest placement update is accepted but
+reported as `stale`; it does not overwrite newer dashboard data.
+
+```json
+{
+  "stage": "applying_to_offers",
+  "survey_response_id": "monthly-survey-123",
+  "submitted_at": "2026-07-31T10:30:00.000Z"
+}
+```
+
+Supported `stage` values:
+
+| Request value | Dashboard label |
+| --- | --- |
+| `not_on_offer` | Not on Offer |
+| `applying_to_offers` | Applying to Offers |
+| `on_offer_happy` | On an Offer Happy |
+| `on_offer_wants_better_one` | On an Offer Wants a Better One |
+| `on_offer_wants_to_get_better` | On an Offer Wants To Get Better |
+
+Any other value returns HTTP `400`. Clients start in a sixth stage, **No
+Stage**, which means nobody has tagged them yet; it is set by the dashboard
+only, so this webhook cannot move a client back to it.
+
+A successful response contains `placement.status` as `changed`, `unchanged`, or
+`stale`.
+
+| Status | Error | When |
+| --- | --- | --- |
+| `400` | `Invalid placement stage. Use one of: ...` | `stage` is not one of the five values above. |
+| `400` | `submitted_at cannot be more than five minutes in the future.` | Clock skew beyond the allowed window. |
+| `400` | `Invalid contact id.` | `{contactId}` is blank. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
+| `404` | `Placement client not found.` | The client exists but is a B2B company or archived. |
+| `409` | `Duplicate placement survey.` | The same `survey_response_id` was already processed. |
+| `500` | `Failed to update placement.` | Unexpected database/server failure. |
+
 ### POST /api/webhooks/contacts/{contactId}/dev-docs - Create Development Document
 
 Saves an AI-generated or automation-generated development document for a client. If `call_id` is included, the call must belong to the same client.
@@ -1006,7 +1049,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/one-on-one-requests - Create 1-on-1 Booking Request
 
-Stores a client's 1-on-1 booking form submission (the Google Form for the 2nd, 3rd, and 4th 1-on-1 calls) so an operator can approve or deny it on the client's profile. Each stored request also sends an in-app notification linking straight to the request card, targeted at the operators in the server's `ONE_ON_ONE_NOTIFY_EMAILS` (falling back to all admins when unset). Posting to Discord is the sender's job; this endpoint only records the request in the dashboard. On approval the dashboard mints a single-use Cal.com booking link and (when configured) pushes the decision to the outbound decision webhook described below; the booked call should then be recorded through the existing `POST /api/webhooks/contacts/{contactId}/calls` endpoint with `call_type: one_on_one`, which is what the profile's 1-on-1 counter is derived from.
+Stores a client's 1-on-1 booking form submission (the Google Form for the 2nd, 3rd, and 4th 1-on-1 calls) so Elle or Mary can approve or deny it on the client's profile (other admins can view requests but not decide). Each stored request also sends an in-app notification linking straight to the request card, targeted at Elle and Mary plus any extra addresses in `ONE_ON_ONE_NOTIFY_EMAILS` (falling back to all admins when none of those emails match a user). Posting to Discord is the sender's job; this endpoint only records the request in the dashboard. On approval the dashboard mints a single-use Cal.com booking link and (when configured) pushes the decision to the outbound decision webhook described below; the booked call should then be recorded through the existing `POST /api/webhooks/contacts/{contactId}/calls` endpoint with `call_type: one_on_one`, which is what the profile's 1-on-1 counter is derived from.
 
 ```http
 POST /api/webhooks/contacts/{contactId}/one-on-one-requests
