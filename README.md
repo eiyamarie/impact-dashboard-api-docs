@@ -177,6 +177,8 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Payment | `POST` | `/api/webhooks/contacts/{contactId}/payments` | Record a backend payment and recalculate remaining balance. |
 | Create B2B Company | `POST` | `/api/webhooks/b2b/clients` | Create a B2B company from the onboarding form and optionally pre-register its sales reps. Idempotent on `contactid`. |
 | Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the company's `contactid` plus the rep's email (upserted per rep per day). |
+| Record Sales Tag Event | `POST` | `/api/webhooks/sales/tag-events` | Record a CRM tag applied to a sales-funnel contact, with the moment it was applied. Upserts the contact if it does not exist yet. |
+| Create Sales Contact | `POST` | `/api/webhooks/sales/contacts` | Record a sales-funnel contact creation from the CRM. |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Update Placement | `POST` | `/api/webhooks/contacts/{contactId}/placement` | Sync a client's placement stage from a monthly survey. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
@@ -846,6 +848,144 @@ Endpoint-specific errors:
 | `404` | `Company not found for that contactid.` | No B2B client matches `contactid` (by internal id or CRM contact id). |
 | `404` | `Rep not found. Register this rep under this B2B company first.` | The company was found, but no active rep under it matches `rep_email`. Since email is unique per company (not globally), the same email may exist as a rep at a different company without matching here. |
 | `500` | `Failed to record EOD submission.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/tag-events - Record Sales Tag Event
+
+Records one application of a CRM tag to a sales-funnel contact, with the moment it was applied (the GHL API cannot report when a tag was applied, so this webhook, fired from a GHL workflow, is the only tag-history record). This is the raw material for the future sales funnel dashboard's metrics and 30-day first-touch attribution. A sales-funnel contact (`SalesContact`) is distinct from a `Client`: it represents a lead in the acquisition funnel, not a closed, onboarded customer.
+
+If the contact identified by `contact_id` does not exist yet, it is created automatically (`first_seen_at` is set to `applied_at`); an existing contact is enriched with any newly-provided `email`, `phone`, or `name` fields, but fields already on file are never overwritten by a webhook value.
+
+**Idempotency:** re-posting the same tag event (same contact, tag, and `applied_at`) returns HTTP `200` with `{ "tagEvent": { "duplicate": true } }`, not an error. GHL workflows re-fire on reschedules by design, and duplicate deliveries must never look like a failure to the automations side.
+
+```http
+POST /api/webhooks/sales/tag-events
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `contact_id` | string | Yes | CRM (GHL) contact id. |
+| `tag` | string | Yes | The tag exactly as applied in the CRM, max 200 characters. Stored verbatim; also matched case-and-whitespace-insensitively for metrics. |
+| `applied_at` | ISO datetime | Yes | The moment the tag was applied, with a timezone offset. Rejected with `400` if more than 24 hours in the future (clock-skew guard) or earlier than 2020-01-01 (implausibly-old guard; a real automation tag event cannot predate this system). |
+| `email` | string | No | Contact email. Only used to enrich the contact if it does not already have one on file. Loosely validated (must contain `@`, max 320 characters); an invalid value is silently **dropped** (treated as absent) rather than rejecting the whole event, so a malformed email from an upstream tool never blocks the tag event or gets stuck on the contact. |
+| `phone` | string | No | Contact phone. Only used to enrich the contact if it does not already have one on file. An empty or whitespace-only value is silently **dropped** (treated as absent) rather than rejecting the event; junk values too short to be a real number are also dropped during ingestion. |
+| `name` | string | No | Contact name, max 300 characters. Only used to enrich the contact if it does not already have one on file. |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "contact_id": "ghl-abc-123",
+  "tag": "Offer Placement",
+  "applied_at": "2026-08-04T14:00:00.000Z",
+  "email": "jane@example.com",
+  "phone": "+15551234567",
+  "name": "Jane Doe"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "tagEvent": {
+    "id": "clwtag123"
+  }
+}
+```
+
+Example duplicate-delivery response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "tagEvent": {
+    "duplicate": true
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `contact_id`, `tag`, or `applied_at`, a malformed `applied_at`, or an unknown field. |
+| `400` | `applied_at cannot be more than 24 hours in the future.` | `applied_at` is more than 24 hours ahead of the server's clock. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `applied_at` predates 2020-01-01, which can only be an epoch-zero or unit-mismatch bug in the sending automation. |
+| `500` | `Failed to record tag event.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/contacts - Create Sales Contact
+
+Records a sales-funnel contact creation from the CRM (GHL), so a `SalesContact` row exists (and its `first_seen_at` reflects the CRM's own `created_at`, when the workflow sends it) even before any tag has been applied. If the contact already exists, this call enriches it the same way `POST /api/webhooks/sales/tag-events` does: only fields not already on file are filled in, and `first_seen_at` never moves later.
+
+```http
+POST /api/webhooks/sales/contacts
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `contact_id` | string | Yes | CRM (GHL) contact id. |
+| `email` | string | No | Contact email. Loosely validated (must contain `@`, max 320 characters); an invalid value is silently **dropped** (treated as absent) rather than rejecting the whole event. |
+| `phone` | string | No | Contact phone. An empty or whitespace-only value is silently **dropped** (treated as absent) rather than rejecting the event; junk values too short to be a real number are also dropped during ingestion. |
+| `name` | string | No | Contact name, max 300 characters. |
+| `created_at` | ISO datetime | No | The CRM's own contact-creation timestamp, with a timezone offset. When omitted, `first_seen_at` is set to the time this webhook was received. When present, rejected with `400` if more than 24 hours in the future (clock-skew guard) or earlier than 2020-01-01 (implausibly-old guard). |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "contact_id": "ghl-abc-123",
+  "email": "jane@example.com",
+  "phone": "+15551234567",
+  "name": "Jane Doe",
+  "created_at": "2026-08-04T10:00:00.000Z"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "salesContact": {
+    "id": "clwcontact123",
+    "created": true
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `contact_id`, a malformed `created_at`, or an unknown field. |
+| `400` | `created_at cannot be more than 24 hours in the future.` | `created_at` is more than 24 hours ahead of the server's clock. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `created_at` predates 2020-01-01, which can only be an epoch-zero or unit-mismatch bug in the sending automation. |
+| `500` | `Failed to record sales contact.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
