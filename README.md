@@ -179,6 +179,11 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Record B2B EOD | `POST` | `/api/webhooks/b2b/eod` | Record a B2B sales rep's end-of-day numbers for a day, resolved by the company's `contactid` plus the rep's email (upserted per rep per day). |
 | Record Sales Tag Event | `POST` | `/api/webhooks/sales/tag-events` | Record a CRM tag applied to a sales-funnel contact, with the moment it was applied. Upserts the contact if it does not exist yet. |
 | Create Sales Contact | `POST` | `/api/webhooks/sales/contacts` | Record a sales-funnel contact creation from the CRM. |
+| Record Dialer Call | `POST` | `/api/webhooks/sales/dialer-calls` | Record one dialer call event (dials, pickups, duration, disposition), matched to contacts by phone. |
+| Record Call Attendance | `POST` | `/api/webhooks/sales/attendance` | Record contact presence for one imp/strategy call; the Showed/No Show verdict is computed server-side. |
+| Record Weekly Ad Spend | `POST` | `/api/webhooks/sales/ad-spend` | Record one weekly ad-spend figure (Monday-start weeks, upserted per week and source). |
+| Record Cash Collected | `POST` | `/api/webhooks/sales/cash` | Record one cash-collection event (closed sale) from the A1 mastersheet, matched to a funnel contact when possible. |
+| Record Slot Utilization | `POST` | `/api/webhooks/sales/slot-utilization` | Record one day's booked/available slot counts for one sales calendar. |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Update Placement | `POST` | `/api/webhooks/contacts/{contactId}/placement` | Sync a client's placement stage from a monthly survey. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
@@ -210,7 +215,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `contactid` | string | Yes | CRM contact ID. Stored and used to identify the client in all follow-up webhook calls. |
+| `contactid` | string | Yes | CRM contact ID. Stored and used to identify the client in all follow-up webhook calls, and to link the client to their funnel lead (see [Linking leads to clients](#linking-leads-to-clients)); send the same value here and as `contact_id` on `POST /api/webhooks/sales/contacts`. |
 | `name` | string | Yes | Client full name. |
 | `email` | string | Yes | Client email. Lowercased and validated as an email address. Must be unique. |
 | `phone` | string | No | Client phone number. |
@@ -926,9 +931,25 @@ Endpoint-specific errors:
 | `400` | `Timestamp cannot be earlier than 2020-01-01.` | `applied_at` predates 2020-01-01, which can only be an epoch-zero or unit-mismatch bug in the sending automation. |
 | `500` | `Failed to record tag event.` | Unexpected database/server failure. |
 
+### Linking leads to clients
+
+The sales endpoints and the client endpoints write to two separate records for the same person: a `SalesContact` (a lead in the acquisition funnel, most of whom never buy) and a `Client` (a closed, onboarded customer). When a lead converts, the two are linked automatically so the sale can be attributed back to the funnel path that produced it.
+
+**The link is made on the CRM contact id, and nothing else.** `POST /api/webhooks/sales/contacts` sends it as `contact_id`; `POST /api/webhooks/clients` sends it as `contactid`. When both records carry the same value, they are linked.
+
+What this means for a sending automation:
+
+- **Always send the CRM contact id on both routes, and make sure it is the same value.** A client created without `contactid` can never be linked automatically.
+- **Order does not matter.** Whichever record arrives second completes the link, so a lead who converts before their contact webhook fires (or the reverse) still links up. There is no batch job to wait for.
+- **Repeat deliveries are safe.** Linking re-runs on every client create and update and every sales-contact upsert; an existing link is never repointed and no duplicate is created.
+- **Matching is never fuzzy.** Clients whose email or phone merely resembles a lead are not linked automatically, because a wrong link misattributes a sale invisibly. Those are surfaced for a human to confirm.
+- **Link failures never fail your request.** Linking happens after the client or contact is committed, so a `2xx` means your data was written even if the link did not happen. A client webhook retries the link on its next delivery; the sales-contacts route is usually one-shot per lead, so there a failed link is recovered by the backfill script rather than by a later call. Failures and conflicts (the two records share an id but one is already linked elsewhere) are recorded for a human in Admin, Activity, Errors.
+
 ### POST /api/webhooks/sales/contacts - Create Sales Contact
 
 Records a sales-funnel contact creation from the CRM (GHL), so a `SalesContact` row exists (and its `first_seen_at` reflects the CRM's own `created_at`, when the workflow sends it) even before any tag has been applied. If the contact already exists, this call enriches it the same way `POST /api/webhooks/sales/tag-events` does: only fields not already on file are filled in, and `first_seen_at` never moves later.
+
+**Send the same contact id you send as `contactid` on `POST /api/webhooks/clients`.** That shared id is the only thing that links a lead to the client they become when they buy (see [Linking leads to clients](#linking-leads-to-clients)). If the two workflows send different ids, the lead and the client stay unconnected and the sale cannot be attributed to a funnel path.
 
 ```http
 POST /api/webhooks/sales/contacts
@@ -986,6 +1007,327 @@ Endpoint-specific errors:
 | `400` | `created_at cannot be more than 24 hours in the future.` | `created_at` is more than 24 hours ahead of the server's clock. |
 | `400` | `Timestamp cannot be earlier than 2020-01-01.` | `created_at` predates 2020-01-01, which can only be an epoch-zero or unit-mismatch bug in the sending automation. |
 | `500` | `Failed to record sales contact.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/dialer-calls - Record Dialer Call
+
+Records one dialer call event, pushed per completed dial. These rows feed the Outbound view's dialer block (dials, pickups, conversations over 3 minutes) and the dialer half of outbound attribution. Matching to sales contacts happens later by normalized phone number, so no contact needs to exist before a dial is recorded.
+
+**Idempotency:** `call_id` is the dedupe key; when omitted, one is synthesized from the normalized phone and `occurred_at`, so re-posting the identical event returns HTTP `200` with `{ "dialerCall": { "duplicate": true } }`. Two genuinely distinct dials to the same number at the same second would collapse into one row when `call_id` is omitted; send `call_id` whenever the dialer exposes one.
+
+```http
+POST /api/webhooks/sales/dialer-calls
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `phone` | string | Yes | The dialed number, max 50 characters. A number too short to normalize (fewer than 7 digits) is **skipped** with HTTP `200` and `{ "dialerCall": { "skipped": "unparseable_phone" } }`, not rejected, since a retry would never improve it. |
+| `occurred_at` | ISO datetime | Yes | When the dial happened, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
+| `call_id` | string | No | The dialer's own call id, max 200 characters; the idempotency key. Synthesized from phone + `occurred_at` when omitted. |
+| `picked_up` | boolean | No | Whether the call was answered. When omitted, inferred as `true` iff `duration_seconds` is greater than 0, so send it explicitly if the dialer reports voicemail durations. |
+| `duration_seconds` | integer | No | Conversation length in seconds, 0 to 86400. Defaults to 0. |
+| `disposition` | string | No | The dialer disposition verbatim (e.g. `call booked`), max 200 characters. An empty string is treated as absent. |
+| `rep` | string | No | The calling rep, max 200 characters. An empty string is treated as absent. |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "call_id": "dial-789",
+  "phone": "+15551234567",
+  "occurred_at": "2026-08-06T15:04:05.000Z",
+  "picked_up": true,
+  "duration_seconds": 245,
+  "disposition": "call booked",
+  "rep": "phillip@impactteam.us"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "dialerCall": {
+    "id": "clwdial123"
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `phone` or `occurred_at`, a malformed value, or an unknown field. |
+| `400` | `occurred_at cannot be more than 24 hours in the future.` | `occurred_at` is more than 24 hours ahead of the server's clock. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `occurred_at` predates 2020-01-01. |
+| `500` | `Failed to record dialer call.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/attendance - Record Call Attendance
+
+Records attendance for one implementation or strategy call, pushed after Fathom/Google Meet report the call. The Showed/No Show verdict is computed server-side from `contact_present_seconds` (at least 2 minutes of presence scores Showed); the sender pushes raw presence data, never a judgment. A call with no presence data at all is stored `UNSCORED`, which is excluded from show rates rather than counted as a no-show.
+
+**Idempotency:** `external_id` (the Fathom recording id, or the sender's own id) is the upsert key: a replay or corrected push updates the same row. A replay **without** `contact_present_seconds` never downgrades a previously scored row back to `UNSCORED`.
+
+```http
+POST /api/webhooks/sales/attendance
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `external_id` | string | Yes | Stable id for this call's recording (Fathom recording id preferred). The idempotency/upsert key. |
+| `call_type` | string | Yes | `imp` or `strategy`. |
+| `scheduled_at` | ISO datetime | Yes | The appointment's scheduled start, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
+| `contact_id` | string | No | CRM (GHL) contact id of the booked contact, max 200 characters. An unknown id stores the row unlinked rather than rejecting it. |
+| `contact_present_seconds` | integer | No | Total seconds the CONTACT (not the rep/host) was present, 0 to 86400. Omit entirely when the call was not recorded; sending `0` means the contact never joined (a No Show). |
+| `rep` | string | No | The rep who took the call, max 200 characters. Used for the per-rep unscored count. An empty string is treated as absent. |
+| `recording_url` | string | No | Link to the recording, http(s) only, max 2000 characters. Kept as evidence when a rep disputes a no-show. |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "external_id": "fathom-170593705",
+  "contact_id": "ghl-abc-123",
+  "call_type": "strategy",
+  "rep": "phillip@impactteam.us",
+  "scheduled_at": "2026-08-06T15:00:00.000Z",
+  "contact_present_seconds": 1620,
+  "recording_url": "https://fathom.video/calls/12345"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "attendance": {
+    "id": "clwatt123",
+    "verdict": "SHOWED",
+    "contactMatched": true
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `external_id`, `call_type`, or `scheduled_at`, a malformed value, a non-http(s) `recording_url`, or an unknown field. |
+| `400` | `scheduled_at cannot be more than 24 hours in the future.` | `scheduled_at` is more than 24 hours ahead of the server's clock. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `scheduled_at` predates 2020-01-01. |
+| `500` | `Failed to record call attendance.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/ad-spend - Record Weekly Ad Spend
+
+Records one weekly ad-spend figure from the client's Funnels & Ads sheet (updated Mondays by their ads team). Spend is weekly only, by design: the dashboard never splits a weekly figure into synthetic daily values, and `week_start` must be the Monday (UTC) the week begins so a week-boundary drift between the sheet and the dashboard cannot be introduced silently.
+
+**Idempotency:** upserted on (`week_start`, `source`): re-posting a corrected figure for the same week replaces the stored value rather than duplicating it.
+
+```http
+POST /api/webhooks/sales/ad-spend
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `week_start` | ISO date | Yes | The Monday the spend week begins, as a date only (`YYYY-MM-DD`), interpreted as UTC. Rejected with `400` if it is not a Monday, is more than 8 days in the future, or predates 2020-01-01. |
+| `spend` | number | Yes | Total spend for the week in dollars, 0 to 10,000,000. Stored as integer cents. |
+| `source` | string | No | Platform/campaign identifier when the sheet carries one, max 100 characters. Defaults to `all`. |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "week_start": "2026-08-03",
+  "spend": 4250.75,
+  "source": "all"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "adSpendWeek": {
+    "id": "clwspend123",
+    "spendCents": 425075
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `week_start` or `spend`, a malformed value, or an unknown field. |
+| `400` | `week_start must be a Monday (UTC).` | `week_start` is any other weekday. |
+| `400` | `week_start cannot be more than 8 days in the future.` | Future-typo guard. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `week_start` predates 2020-01-01. |
+| `500` | `Failed to record ad spend.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/cash - Record Cash Collected
+
+Records one cash-collection event (a closed sale / payment collected) from the A1 mastersheet. Feeds Total Cash Collected, units sold, average cash per unit, and cash-by-source attribution on the Sales dashboard. Distinct from `POST /api/webhooks/contacts/{contactId}/payments`: these are funnel-level sales records that may precede (or never become) an onboarded Client.
+
+**Idempotency:** `external_id` (sheet row id or payment id) is the dedupe key; when omitted, one is synthesized from the identifying fields + `collected_at` + amount + units + closer, so a re-pushed row returns HTTP `200` with `{ "cashEvent": { "duplicate": true } }` instead of double-counting revenue. Caveat: without `external_id`, two genuinely distinct sales that share every synthesized field (same contact, timestamp, amount, units, closer) collapse into one row and the second is silently swallowed, undercounting revenue. This matters especially if `collected_at` only carries day granularity. Always send `external_id` when the sheet has a row id.
+
+```http
+POST /api/webhooks/sales/cash
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `amount` | number | Yes | Cash collected in dollars, 0 to 10,000,000. Stored as integer cents. |
+| `collected_at` | ISO datetime | Yes | When the cash was collected, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
+| `external_id` | string | No | Stable id for this sale (sheet row id / payment id), max 200 characters. Strongly recommended; the dedupe key. |
+| `contact_id` | string | No | CRM (GHL) contact id, max 200 characters. First choice for linking the sale to a funnel contact. |
+| `email` | string | No | Fallback contact match. Loosely validated; an invalid value is silently dropped. |
+| `phone` | string | No | Second fallback contact match. An empty value is silently dropped. |
+| `units` | integer | No | Units sold in this event, 1 to 1000. Defaults to 1. |
+| `closer` | string | No | The closing rep, max 200 characters. An empty string is treated as absent. |
+
+An unmatched sale (no contact found by any identifier) is still stored and counts in the top-line total; the response reports `contactMatched: false`.
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "external_id": "a1-row-1042",
+  "contact_id": "ghl-abc-123",
+  "amount": 3000,
+  "units": 1,
+  "closer": "phillip@impactteam.us",
+  "collected_at": "2026-08-06T18:30:00.000Z"
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "cashEvent": {
+    "id": "clwcash123",
+    "contactMatched": true
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing `amount` or `collected_at`, a malformed value, or an unknown field. |
+| `400` | `collected_at cannot be more than 24 hours in the future.` | `collected_at` is more than 24 hours ahead of the server's clock. |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `collected_at` predates 2020-01-01. |
+| `500` | `Failed to record cash event.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/sales/slot-utilization - Record Slot Utilization
+
+Records one day's booked/available slot counts for one sales calendar (daily slot utilization = booked / total availability on GHL calendars). Push once per calendar per day; a same-day re-push (counts changing as bookings come in) replaces the stored figures.
+
+```http
+POST /api/webhooks/sales/slot-utilization
+```
+
+Headers:
+
+```http
+x-api-key: <API_KEY>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body schema:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `date` | ISO date | Yes | The day the counts describe (`YYYY-MM-DD`, UTC). Rejected with `400` if earlier than 2020-01-01 or more than 62 days in the future. |
+| `calendar` | string | Yes | Calendar identifier (e.g. `Strategy Call - Rotator` or a rep's calendar name), max 200 characters. |
+| `slots_total` | integer | Yes | Total available slots that day, 0 to 10,000. |
+| `slots_booked` | integer | Yes | Booked slots that day, 0 to 10,000. Must not exceed `slots_total`. |
+
+Unknown extra fields are rejected with `400` (this route has no lenient exception).
+
+Example request:
+
+```json
+{
+  "date": "2026-08-06",
+  "calendar": "Strategy Call - Rotator",
+  "slots_total": 16,
+  "slots_booked": 11
+}
+```
+
+Example success response, HTTP `200`:
+
+```json
+{
+  "success": true,
+  "slotDay": {
+    "id": "clwslot123"
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid request payload.` | Missing or malformed fields, `slots_booked` greater than `slots_total`, or an unknown field. |
+| `400` | `date cannot be more than 62 days in the future.` | Future-typo guard (availability may be pushed ahead, but not months out). |
+| `400` | `Timestamp cannot be earlier than 2020-01-01.` | `date` predates 2020-01-01. |
+| `500` | `Failed to record slot utilization.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
@@ -1072,9 +1414,12 @@ reported as `stale`; it does not overwrite newer dashboard data.
 {
   "stage": "applying_to_offers",
   "survey_response_id": "monthly-survey-123",
-  "submitted_at": "2026-07-31T10:30:00.000Z"
+  "submitted_at": "2026-07-31T10:30:00.000Z",
+  "loom_video_url": "https://www.loom.com/share/abc123"
 }
 ```
+
+`loom_video_url` is optional: the client's most recent Loom application video, collected on the monthly survey. Webhook-wins: each survey submission that carries it refreshes the stored link, which is shown on the client's profile in the dashboard. Must be http(s); any other scheme is rejected with `400`.
 
 Supported `stage` values:
 
