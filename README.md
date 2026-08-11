@@ -1034,7 +1034,7 @@ Request body schema:
 | `occurred_at` | ISO datetime | Yes | When the dial happened, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
 | `call_id` | string | No | The dialer's own call id, max 200 characters; the idempotency key. Synthesized from phone + `occurred_at` when omitted. |
 | `picked_up` | boolean | No | Whether the call was answered. When omitted, inferred as `true` iff `duration_seconds` is greater than 0, so send it explicitly if the dialer reports voicemail durations. |
-| `duration_seconds` | integer | No | Conversation length in seconds, 0 to 86400. Defaults to 0. |
+| `duration_seconds` | integer or string | No | Conversation length in seconds, 0 to 86400. Defaults to 0. A numeric string is also accepted. As a targeted rescue of a known sender bug, a value of the form `"NaN<disposition label>"` (e.g. `"NaNNo Answer"`) is treated as `duration_seconds: 0` and, if `disposition` was not sent, the trailing label (truncated to 200 characters) is used as `disposition`. Any other non-numeric value is still rejected with `400`. |
 | `disposition` | string | No | The dialer disposition verbatim (e.g. `call booked`), max 200 characters. An empty string is treated as absent. |
 | `rep` | string | No | The calling rep, max 200 characters. An empty string is treated as absent. |
 
