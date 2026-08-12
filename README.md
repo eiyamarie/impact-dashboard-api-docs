@@ -182,7 +182,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Record Dialer Call | `POST` | `/api/webhooks/sales/dialer-calls` | Record one dialer call event (dials, pickups, duration, disposition), matched to contacts by phone. |
 | Record Call Attendance | `POST` | `/api/webhooks/sales/attendance` | Record contact presence for one imp/strategy call; the Showed/No Show verdict is computed server-side. |
 | Record Weekly Ad Spend | `POST` | `/api/webhooks/sales/ad-spend` | Record one weekly ad-spend figure (Monday-start weeks, upserted per week and source). |
-| Record Cash Collected | `POST` | `/api/webhooks/sales/cash` | Record one cash-collection event (closed sale) from the A1 mastersheet, matched to a funnel contact when possible. |
+| Record Cash Collected | `POST` | `/api/webhooks/sales/cash` | Record one cash-collection event (closed sale) from the A1 mastersheet, matched to a funnel contact when possible; unmatched sales are stored but excluded from dashboard cash totals until they link. |
 | Record Slot Utilization | `POST` | `/api/webhooks/sales/slot-utilization` | Record one day's booked/available slot counts for one sales calendar. |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
 | Update Placement | `POST` | `/api/webhooks/contacts/{contactId}/placement` | Sync a client's placement stage from a monthly survey. |
