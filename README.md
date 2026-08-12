@@ -1421,15 +1421,19 @@ reported as `stale`; it does not overwrite newer dashboard data.
 
 `loom_video_url` is optional: the client's most recent Loom application video, collected on the monthly survey. Webhook-wins: each survey submission that carries it refreshes the stored link, which is shown on the client's profile in the dashboard. Must be http(s); any other scheme is rejected with `400`.
 
-Supported `stage` values:
+Supported `stage` values. Each stage accepts either the canonical snake_case
+key or the verbatim monthly-survey answer text, so the automation can forward
+the raw survey answer with no mapping step. Matching is case-insensitive and
+exact after trimming whitespace; any other wording (including a drifted survey
+answer) returns HTTP `400` rather than guessing a stage.
 
-| Request value | Dashboard label |
-| --- | --- |
-| `not_on_offer` | Not on Offer |
-| `applying_to_offers` | Applying to Offers |
-| `on_offer_happy` | On an Offer Happy |
-| `on_offer_wants_better_one` | On an Offer Wants a Better One |
-| `on_offer_wants_to_get_better` | On an Offer Wants To Get Better |
+| Request value | Survey answer alias | Dashboard label |
+| --- | --- | --- |
+| `not_on_offer` | `Taking a break from sales` | Not on Offer |
+| `applying_to_offers` | `Looking for an offer` | Applying to Offers |
+| `on_offer_happy` | `Happy on this offer` | On an Offer Happy |
+| `on_offer_wants_better_one` | `Looking for a better offer` | On an Offer Wants a Better One |
+| `on_offer_wants_to_get_better` | `Not making as much as I could be on this offer` | On an Offer Wants To Get Better |
 
 Any other value returns HTTP `400`. Clients start in a sixth stage, **No
 Stage**, which means nobody has tagged them yet; it is set by the dashboard
