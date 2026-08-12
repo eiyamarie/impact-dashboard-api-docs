@@ -1097,7 +1097,7 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `external_id` | string | Yes | Stable id for this call's recording (Fathom recording id preferred). The idempotency/upsert key. |
-| `call_type` | string | Yes | `imp` or `strategy`. |
+| `call_type` | string | Yes | `imp` or `strategy`. Case-insensitive; a trailing " call" is stripped and `implementation` maps to `imp`, so `"Strategy Call"` and `"implementation call"` are accepted. Anything else is a `400`. |
 | `scheduled_at` | ISO datetime | Yes | The appointment's scheduled start, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
 | `contact_id` | string | No | CRM (GHL) contact id of the booked contact, max 200 characters. An unknown id stores the row unlinked rather than rejecting it. |
 | `contact_present_seconds` | integer | No | Total seconds the CONTACT (not the rep/host) was present, 0 to 86400. Omit entirely when the call was not recorded; sending `0` means the contact never joined (a No Show). |
