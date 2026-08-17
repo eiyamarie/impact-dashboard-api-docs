@@ -188,6 +188,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Update Placement | `POST` | `/api/webhooks/contacts/{contactId}/placement` | Sync a client's placement stage from a monthly survey. |
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 | Create 1-on-1 Booking Request | `POST` | `/api/webhooks/contacts/{contactId}/one-on-one-requests` | Store a client's 1-on-1 booking form submission for operator approval or denial. |
+| Create Refund Request | `POST` | `/api/webhooks/contacts/{contactId}/refund-requests` | Store an internal refund request for the approver to approve or deny. |
 
 ## Endpoint Reference
 
@@ -1621,6 +1622,88 @@ When an operator approves or denies a request, the dashboard POSTs a JSON body t
 ```
 
 `status` is `approved` or `denied`. `booking_url` is the single-use Cal.com link on approval and `null` on denial; `denial_notes` is the operator's explanation on denial and `null` on approval.
+
+### POST /api/webhooks/contacts/{contactId}/refund-requests - Create Refund Request
+
+Stores a refund request filed by an Impact team member through the internal GHL form, so the designated approver can approve or deny it on the client's Payments tab. The sender (Make) resolves the client's GHL contact first: this endpoint is contact-scoped, so a request always lands on a named client rather than being matched by typed name or email.
+
+Each stored request notifies the approvers listed in `REFUND_APPROVER_EMAILS`, in-app and by email, with a link straight to the request card. When that variable is unset or matches no admin/owner user, the in-app notification falls back to all admins and owners so a pending refund is never announced to nobody. After a decision, the requester is notified by email, and in-app when `requester_email` matches a dashboard user.
+
+This endpoint records a decision only. The refund itself is issued manually in Stripe/GHL: nothing here writes to the cash ledger, and client balances are unaffected.
+
+```http
+POST /api/webhooks/contacts/{contactId}/refund-requests
+```
+
+Request body schema (strict: an unknown key is a `400`):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `requester_name` | string | Yes | The Impact team member filing the request. |
+| `requester_email` | string | Yes | Their email. Lowercased on write, and used to notify them of the decision. |
+| `requester_role` | string | No | Their role, as typed on the form. |
+| `requester_department` | string | No | Their department, as typed on the form. |
+| `client_name` | string | No | The client name as typed on the form. Stored verbatim so a mis-resolved contact is diagnosable. |
+| `client_email` | string | No | The client email as typed on the form. Stored verbatim for the same reason. |
+| `programme` | string | No | Programme / product purchased. |
+| `refund_type` | string | No | Refund type, for example full or partial. |
+| `amount_requested` | number or string | No | Amount requested. Accepts `1500`, `"1500"`, `"$1,500.00"`, `"1500 USD"`. Anything still ambiguous is a `400` rather than a silently dropped field. Negative values and more than two decimal places are rejected. |
+| `cause_of_refund` | string | No | Where the cause of the refund lies. |
+| `reason` | string | Yes | The reason the client gave. |
+| `agreement_url` | string | No | Link to the signed agreement. Must be `http` or `https`. |
+| `evidence_urls` | string or string[] | No | Supporting evidence link(s). A single URL string (what the form's one file-upload field produces) or an array of up to 10. Each must be `http` or `https`. An empty string counts as no evidence. Defaults to `[]`. |
+| `answers` | JSON | No | The raw form submission, kept so a later form change stays diagnosable. Defaults to a summary of the typed fields. |
+| `submitted_at` | ISO datetime | No | When the form was submitted. Defaults to the time of delivery. |
+| `event_id` | string | No | Submission id or static form label from the form tool. Used for duplicate rejection: the stored key is `event_id` plus a hash of the submission content (excluding `submitted_at`), so a static value (e.g. the form name) is safe and only an identical redelivery is rejected as a duplicate. Note this means two legitimate submissions with exactly the same answers also bounce with a 409; change any field to resubmit. An explicit `Idempotency-Key` header takes precedence (trimmed; max 200 chars, longer keys are ignored). |
+
+Example request:
+
+```json
+{
+  "requester_name": "Sam Okafor",
+  "requester_email": "sam@impactteam.us",
+  "requester_role": "Client Success",
+  "requester_department": "Impact",
+  "client_name": "Jamie Rivera",
+  "client_email": "jamie.rivera@example.com",
+  "programme": "Accelerator",
+  "refund_type": "Full refund",
+  "amount_requested": "$1,500.00",
+  "cause_of_refund": "Client circumstance",
+  "reason": "Client lost their job and cannot continue the programme.",
+  "agreement_url": "https://app.pandadoc.com/documents/abc123",
+  "evidence_urls": "https://drive.google.com/file/d/123/view",
+  "submitted_at": "2026-08-15T10:00:00.000Z",
+  "event_id": "ghl_form_9931"
+}
+```
+
+Example success response, HTTP `201`:
+
+```json
+{
+  "success": true,
+  "request": {
+    "id": "clwrefund123",
+    "clientId": "clwclient123",
+    "requesterName": "Sam Okafor",
+    "amountRequested": "1500.00",
+    "status": "PENDING",
+    "submittedAt": "2026-08-15T10:00:00.000Z",
+    "createdAt": "2026-08-15T10:00:02.000Z"
+  }
+}
+```
+
+Endpoint-specific errors:
+
+| Status | Message | When it happens |
+| --- | --- | --- |
+| `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
+| `400` | `Invalid request payload.` | Missing `requester_name`, `requester_email`, or `reason`; an unparseable `amount_requested`; a non-http URL; or an unknown field. |
+| `404` | `Client not found.` | No client exists for `{contactId}`. |
+| `409` | `Duplicate refund request webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
+| `500` | `Failed to create refund request.` | Unexpected database/server failure. |
 
 ## Curl Examples
 
