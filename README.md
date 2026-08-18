@@ -189,6 +189,9 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 | Create 1-on-1 Booking Request | `POST` | `/api/webhooks/contacts/{contactId}/one-on-one-requests` | Store a client's 1-on-1 booking form submission for operator approval or denial. |
 | Create Refund Request | `POST` | `/api/webhooks/contacts/{contactId}/refund-requests` | Store an internal refund request for the approver to approve or deny. |
+| Enroll Accelerator Member | `POST` | `/api/webhooks/accelerator/enrollments` | Create or update an Impact Accelerator membership. |
+| Update Accelerator Onboarding | `PATCH` | `/api/webhooks/accelerator/{contactId}/onboarding` | Record PandaDoc, access, onboarding, portal, and certification milestones. |
+| Record Accelerator Attendance | `POST` | `/api/webhooks/accelerator/{contactId}/attendance` | Upsert one member's RSVP or attendance result for a coaching session. |
 
 ## Endpoint Reference
 
@@ -1704,6 +1707,55 @@ Endpoint-specific errors:
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate refund request webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
 | `500` | `Failed to create refund request.` | Unexpected database/server failure. |
+
+### Impact Accelerator operations
+
+These endpoints support the Impact Accelerator fulfillment workflow. They are
+strict and require the normal webhook API key.
+
+`POST /api/webhooks/accelerator/enrollments` creates the product membership.
+
+```json
+{
+  "contact_id": "ghl-contact-id",
+  "enrolled_at": "2026-08-19T09:00:00.000Z",
+  "whop_user_id": "whop-member-id"
+}
+```
+
+`PATCH /api/webhooks/accelerator/{contactId}/onboarding` records one milestone.
+Accepted `milestone` values are `pandadoc_sent`, `pandadoc_signed`,
+`whop_access_granted`, `discord_linked`, `onboarding_sent`,
+`portal_completed`, and `certification_unlocked`.
+
+```json
+{
+  "milestone": "portal_completed",
+  "happened_at": "2026-09-01T14:00:00.000Z"
+}
+```
+
+`POST /api/webhooks/accelerator/{contactId}/attendance` upserts a single
+member's result for one group coaching session. `attendance_id` must remain
+stable for retries; `(contactId, session_id)` may occur only once. Only
+`attended` records count toward the 15-call certification target.
+
+```json
+{
+  "attendance_id": "source-attendee-session-123",
+  "session_id": "source-session-456",
+  "scheduled_at": "2026-09-02T16:00:00.000Z",
+  "status": "attended",
+  "attended_at": "2026-09-02T16:04:00.000Z",
+  "attended_seconds": 3580,
+  "source": "whop"
+}
+```
+
+The protected daily endpoint `POST /api/automation/run-accelerator-operations`
+creates durable CX actions for no first RSVP after 24 hours, no attended call
+after 7 days, and certification review. Schedule it once daily with the
+existing cron authentication.
 
 ## Curl Examples
 
