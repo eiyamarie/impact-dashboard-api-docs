@@ -192,6 +192,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Enroll Accelerator Member | `POST` | `/api/webhooks/accelerator/enrollments` | Create or update an Impact Accelerator membership. |
 | Update Accelerator Onboarding | `PATCH` | `/api/webhooks/accelerator/{contactId}/onboarding` | Record PandaDoc, access, onboarding, portal, and certification milestones. |
 | Record Accelerator Attendance | `POST` | `/api/webhooks/accelerator/{contactId}/attendance` | Upsert one member's RSVP or attendance result for a coaching session. |
+| Sync Accelerator RSVP Count | `PATCH` | `/api/webhooks/accelerator/{contactId}/rsvp-count` | Mirror the GHL "IA Coaching Calls RSVP Count" custom field onto the membership. |
 
 ## Endpoint Reference
 
@@ -1752,6 +1753,20 @@ stable for retries; `(contactId, session_id)` may occur only once. Only
   "attended_at": "2026-09-02T16:04:00.000Z",
   "attended_seconds": 3580,
   "source": "whop"
+}
+```
+
+`PATCH /api/webhooks/accelerator/{contactId}/rsvp-count` mirrors the GHL
+custom field "IA Coaching Calls RSVP Count" (GHL is the source of truth).
+Send the current **absolute** count every time the field changes, never a
+delta, so retries are idempotent. The dashboard stamps the first-RSVP and
+last-increase timestamps only when the count strictly increases; a lower
+count (cancelled bookings) is stored without moving either timestamp. An
+increase also resolves any open "no first RSVP" CX action.
+
+```json
+{
+  "rsvp_count": 3
 }
 ```
 
