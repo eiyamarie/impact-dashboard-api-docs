@@ -1714,6 +1714,9 @@ These endpoints support the Impact Accelerator fulfillment workflow. They are
 strict and require the normal webhook API key.
 
 `POST /api/webhooks/accelerator/enrollments` creates the product membership.
+It also sets the client's `program` to `Impact Accelerator` (recorded in the
+client's property history), so the sender does not need a separate clients
+webhook call to update the program.
 
 ```json
 {
