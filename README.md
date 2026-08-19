@@ -191,7 +191,6 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Refund Request | `POST` | `/api/webhooks/contacts/{contactId}/refund-requests` | Store an internal refund request for the approver to approve or deny. |
 | Enroll Accelerator Member | `POST` | `/api/webhooks/accelerator/enrollments` | Create or update an Impact Accelerator membership. |
 | Update Accelerator Onboarding | `PATCH` | `/api/webhooks/accelerator/{contactId}/onboarding` | Record PandaDoc, access, onboarding, portal, and certification milestones. |
-| Record Accelerator Attendance | `POST` | `/api/webhooks/accelerator/{contactId}/attendance` | Upsert one member's RSVP or attendance result for a coaching session. |
 | Sync Accelerator RSVP Count | `PATCH` | `/api/webhooks/accelerator/{contactId}/rsvp-count` | Mirror the GHL "IA Coaching Calls RSVP Count" custom field onto the membership. |
 
 ## Endpoint Reference
@@ -1736,23 +1735,6 @@ Accepted `milestone` values are `pandadoc_sent`, `pandadoc_signed`,
 {
   "milestone": "portal_completed",
   "happened_at": "2026-09-01T14:00:00.000Z"
-}
-```
-
-`POST /api/webhooks/accelerator/{contactId}/attendance` upserts a single
-member's result for one group coaching session. `attendance_id` must remain
-stable for retries; `(contactId, session_id)` may occur only once. Only
-`attended` records count toward the 15-call certification target.
-
-```json
-{
-  "attendance_id": "source-attendee-session-123",
-  "session_id": "source-session-456",
-  "scheduled_at": "2026-09-02T16:00:00.000Z",
-  "status": "attended",
-  "attended_at": "2026-09-02T16:04:00.000Z",
-  "attended_seconds": 3580,
-  "source": "whop"
 }
 ```
 
