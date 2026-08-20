@@ -1014,7 +1014,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/sales/dialer-calls - Record Dialer Call
 
-Records one dialer call event, pushed per completed dial. These rows feed the Outbound view's activity metrics (dials, pickups, and conversations over 3 minutes). Contact-linked conversions such as Sets booked remain pending until the upstream feed supplies stable contact identity, so no contact needs to exist before a dial is recorded.
+Records one dialer call event, pushed per completed dial. These rows feed the Outbound view's activity metrics (dials, pickups, and conversations over 3 minutes). Send `contact_id` when the sender can resolve the GHL contact, which additionally enables Sets booked and Convo to set; those stay pending while no dial carries one. No contact needs to exist before a dial is recorded.
 
 **Idempotency:** `call_id` is the dedupe key; when omitted, one is synthesized from the normalized phone and `occurred_at`, so re-posting the identical event returns HTTP `200` with `{ "dialerCall": { "duplicate": true } }`. Two genuinely distinct dials to the same number at the same second would collapse into one row when `call_id` is omitted; send `call_id` whenever the dialer exposes one.
 
@@ -1037,6 +1037,7 @@ Request body schema:
 | `phone` | string | Yes | The dialed number, max 50 characters. A number too short to normalize (fewer than 7 digits) is **skipped** with HTTP `200` and `{ "dialerCall": { "skipped": "unparseable_phone" } }`, not rejected, since a retry would never improve it. |
 | `occurred_at` | ISO datetime | Yes | When the dial happened, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
 | `call_id` | string | No | The dialer's own call id, max 200 characters; the idempotency key. Synthesized from phone + `occurred_at` when omitted. |
+| `contact_id` | string | No | The GHL contact this dial reached, when the sender can resolve it (the dialer itself has no contact reference). Max 200 characters; a blank string is treated as absent. This is what makes Sets booked and Convo to set computable: without it those stay pending rather than being guessed from the phone number, which could credit outbound for an inbound sale. Cold-list numbers that match no contact are expected and fine to omit. |
 | `picked_up` | boolean | No | Whether the call was answered. When omitted, inferred as `true` iff `duration_seconds` is greater than 0, so send it explicitly if the dialer reports voicemail durations. |
 | `duration_seconds` | integer or string | No | Conversation length in seconds, 0 to 86400. Defaults to 0. A numeric string is also accepted. As a targeted rescue of a known sender bug, a value of the form `"NaN<disposition label>"` (e.g. `"NaNNo Answer"`) is treated as `duration_seconds: 0` and, if `disposition` was not sent, the trailing label (truncated to 200 characters) is used as `disposition`. Any other non-numeric value is still rejected with `400`. |
 | `disposition` | string | No | The dialer disposition verbatim (e.g. `call booked`), max 200 characters. An empty string is treated as absent. |
@@ -1050,6 +1051,7 @@ Example request:
 {
   "call_id": "dial-789",
   "phone": "+15551234567",
+  "contact_id": "ghl-abc-123",
   "occurred_at": "2026-08-06T15:04:05.000Z",
   "picked_up": true,
   "duration_seconds": 245,
