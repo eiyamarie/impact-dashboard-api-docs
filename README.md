@@ -1014,7 +1014,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/sales/dialer-calls - Record Dialer Call
 
-Records one dialer call event, pushed per completed dial. These rows feed the Outbound view's dialer block (dials, pickups, conversations over 3 minutes) and the dialer half of outbound attribution. Matching to sales contacts happens later by normalized phone number, so no contact needs to exist before a dial is recorded.
+Records one dialer call event, pushed per completed dial. These rows feed the Outbound view's activity metrics (dials, pickups, and conversations over 3 minutes). Contact-linked conversions such as Sets booked remain pending until the upstream feed supplies stable contact identity, so no contact needs to exist before a dial is recorded.
 
 **Idempotency:** `call_id` is the dedupe key; when omitted, one is synthesized from the normalized phone and `occurred_at`, so re-posting the identical event returns HTTP `200` with `{ "dialerCall": { "duplicate": true } }`. Two genuinely distinct dials to the same number at the same second would collapse into one row when `call_id` is omitted; send `call_id` whenever the dialer exposes one.
 
@@ -1208,7 +1208,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/sales/cash - Record Cash Collected
 
-Records one cash-collection event (a closed sale / payment collected) from the A1 mastersheet. Feeds Total Cash Collected, units sold, average cash per unit, and cash-by-source attribution on the Sales dashboard. Distinct from `POST /api/webhooks/contacts/{contactId}/payments`: these are funnel-level sales records that may precede (or never become) an onboarded Client.
+Records one cash-collection event (a closed sale / payment collected) from the A1 mastersheet. Feeds units sold, average cash per unit, and GHL pathway cash attribution on the Sales dashboard. The canonical Cash collected hero uses the client Payment ledger instead. Distinct from `POST /api/webhooks/contacts/{contactId}/payments`: these are funnel-level sales records that may precede (or never become) an onboarded Client.
 
 **Idempotency:** `external_id` (sheet row id or payment id) is the dedupe key; when omitted, one is synthesized from the identifying fields + `collected_at` + amount + units + closer, so a re-pushed row returns HTTP `200` with `{ "cashEvent": { "duplicate": true } }` instead of double-counting revenue. Caveat: without `external_id`, two genuinely distinct sales that share every synthesized field (same contact, timestamp, amount, units, closer) collapse into one row and the second is silently swallowed, undercounting revenue. This matters especially if `collected_at` only carries day granularity. Always send `external_id` when the sheet has a row id.
 
