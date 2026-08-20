@@ -1279,6 +1279,8 @@ Endpoint-specific errors:
 
 Records one day's booked/available slot counts for one sales calendar (daily slot utilization = booked / total availability on GHL calendars). Push once per calendar per day; a same-day re-push (counts changing as bookings come in) replaces the stored figures.
 
+Send `calendar_group` (`Imp Calls` or `Strategy Calls`) so the dashboard can report implementation and strategy capacity separately. The dashboard falls back to matching call-type words in the calendar name when no group is sent, which does not work for the real calendar names in use, so a row without a group is reported as unclassified capacity rather than being guessed into a bucket.
+
 ```http
 POST /api/webhooks/sales/slot-utilization
 ```
@@ -1296,7 +1298,8 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `date` | ISO date | Yes | The day the counts describe (`YYYY-MM-DD`, UTC). Rejected with `400` if earlier than 2020-01-01 or more than 62 days in the future. |
-| `calendar` | string | Yes | Calendar identifier (e.g. `Strategy Call - Rotator` or a rep's calendar name), max 200 characters. |
+| `calendar` | string | Yes | Calendar identifier (e.g. `Gameplan Call - Patrick` or a rep's calendar name), max 200 characters. It is the grouping key, so keep it stable per calendar. |
+| `calendar_group` | string | No | The GHL calendar **group** the calendar sits in: `Imp Calls` or `Strategy Calls`, max 200 characters. This is what splits implementation capacity from strategy capacity on the dashboard. Individual calendar names vary per lead source and per rep and carry no call-type information, so without this the calendar shows as unclassified and counts toward neither utilization figure. A blank string is treated as absent, and omitting it on a re-push leaves any previously stored group untouched. |
 | `slots_total` | integer | Yes | Total available slots that day, 0 to 10,000. |
 | `slots_booked` | integer | Yes | Booked slots that day, 0 to 10,000. Must not exceed `slots_total`. |
 
@@ -1307,7 +1310,8 @@ Example request:
 ```json
 {
   "date": "2026-08-06",
-  "calendar": "Strategy Call - Rotator",
+  "calendar": "Gameplan Call - Patrick",
+  "calendar_group": "Strategy Calls",
   "slots_total": 16,
   "slots_booked": 11
 }
