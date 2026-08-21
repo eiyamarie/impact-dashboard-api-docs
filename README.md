@@ -1427,11 +1427,19 @@ reported as `stale`; it does not overwrite newer dashboard data.
   "stage": "applying_to_offers",
   "survey_response_id": "monthly-survey-123",
   "submitted_at": "2026-07-31T10:30:00.000Z",
-  "loom_video_url": "https://www.loom.com/share/abc123"
+  "loom_video_url": "https://www.loom.com/share/abc123",
+  "cash_collected_this_month": "40000",
+  "commission_earned_this_month": "5000"
 }
 ```
 
 `loom_video_url` is optional: the client's most recent Loom application video, collected on the monthly survey. Webhook-wins: each survey submission that carries it refreshes the stored link, which is shown on the client's profile in the dashboard. Must be http(s); any other scheme is rejected with `400`.
+
+`cash_collected_this_month` and `commission_earned_this_month` are optional: what the client earned **as a working sales rep** that month. These are the rep's own numbers for the company they work for, not money we collected from them as a paying client, and they never touch a client balance or `paymentStatus`. They are stored per reported month and shown on the client's profile in the dashboard.
+
+Both fields are free text as typed into the survey, so `"40000"`, `"$40,000.00"` and `40000` are all accepted. An empty string, a lone `"-"`, or an absent field means "not answered" and is stored as unknown, which is not the same as a real `0`. An answer that cannot be parsed confidently (`"about 40k"`, `"4000 or 5000"`, a negative, more than two decimal places, or more than ten digits before the point) returns `400` rather than guessing a number.
+
+**Reported month.** The month is derived from `submitted_at`: a survey submitted on the 1st to the 7th reports the **previous** month; from the 8th onward it reports the submission month. The day is read in the business timezone (US Eastern), not UTC, so an evening submission is not pushed into the next day. This matches how reps fill in a "how did last month go" form. One record is kept per client per reported month, so a corrected re-submission overwrites that month rather than adding a second one. A blank answer on a later survey does not erase a figure already on file, and an out-of-order retry of an older submission is ignored rather than reverting a correction.
 
 Supported `stage` values. Each stage accepts either the canonical snake_case
 key or the verbatim monthly-survey answer text, so the automation can forward
@@ -1458,6 +1466,7 @@ A successful response contains `placement.status` as `changed`, `unchanged`, or
 | --- | --- | --- |
 | `400` | `Invalid placement stage. Use one of: ...` | `stage` is not one of the five values above. |
 | `400` | `submitted_at cannot be more than five minutes in the future.` | Clock skew beyond the allowed window. |
+| `400` | `cash_collected_this_month: must be a non-negative amount ...` | The amount could not be parsed confidently. Same for `commission_earned_this_month`. |
 | `400` | `Invalid contact id.` | `{contactId}` is blank. |
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `404` | `Placement client not found.` | The client exists but is a B2B company or archived. |
