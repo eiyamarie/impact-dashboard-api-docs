@@ -975,6 +975,7 @@ Request body schema:
 | `email` | string | No | Contact email. Loosely validated (must contain `@`, max 320 characters); an invalid value is silently **dropped** (treated as absent) rather than rejecting the whole event. |
 | `phone` | string | No | Contact phone. An empty or whitespace-only value is silently **dropped** (treated as absent) rather than rejecting the event; junk values too short to be a real number are also dropped during ingestion. |
 | `name` | string | No | Contact name, max 300 characters. |
+| `first_attribution_source` | string | No | GHL's **first** attribution source, max 200 characters; a blank string is treated as absent. This is what identifies a paid-ads lead. Send the first attribution, **not** the contact's current `source` field: the plain source can be rewritten by a later form submission or workflow, which would silently reclassify a paid lead as organic. Stored first-write-wins, so once a contact has a source a later payload can never change it, though a contact that arrived without one (for example via a tag event) will be filled in when a source first appears. |
 | `created_at` | ISO datetime | No | The CRM's own contact-creation timestamp, with a timezone offset. When omitted, `first_seen_at` is set to the time this webhook was received. When present, rejected with `400` if more than 24 hours in the future (clock-skew guard) or earlier than 2020-01-01 (implausibly-old guard). |
 
 Unknown extra fields are rejected with `400` (this route has no lenient exception).
@@ -987,6 +988,7 @@ Example request:
   "email": "jane@example.com",
   "phone": "+15551234567",
   "name": "Jane Doe",
+  "first_attribution_source": "facebook",
   "created_at": "2026-08-04T10:00:00.000Z"
 }
 ```
@@ -1034,7 +1036,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `phone` | string | Yes | The dialed number, max 50 characters. A number too short to normalize (fewer than 7 digits) is **skipped** with HTTP `200` and `{ "dialerCall": { "skipped": "unparseable_phone" } }`, not rejected, since a retry would never improve it. |
+| `phone` | string | Yes | The dialed number, max 50 characters. The key is required but its value may be **empty**: an empty value, or a number too short to normalize (fewer than 7 digits), is **skipped** with HTTP `200` and `{ "dialerCall": { "skipped": "unparseable_phone" } }`, not rejected, since a retry would never improve it. Dialers that post "Skipped Record" rows with a blank number are therefore accepted and ignored rather than retried forever. A skipped dial stores no row, so it does not count toward total dials. |
 | `occurred_at` | ISO datetime | Yes | When the dial happened, with a timezone offset. Rejected with `400` if more than 24 hours in the future or earlier than 2020-01-01. |
 | `call_id` | string | No | The dialer's own call id, max 200 characters; the idempotency key. Synthesized from phone + `occurred_at` when omitted. |
 | `contact_id` | string | No | The GHL contact this dial reached, when the sender can resolve it (the dialer itself has no contact reference). Max 200 characters; a blank string is treated as absent. This is what makes Sets booked and Convo to set computable: without it those stay pending rather than being guessed from the phone number, which could credit outbound for an inbound sale. Cold-list numbers that match no contact are expected and fine to omit. |
