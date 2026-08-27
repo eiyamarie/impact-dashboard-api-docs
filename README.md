@@ -171,6 +171,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Client | `POST` | `/api/webhooks/clients` | Create a client from a sale or enrollment event. |
 | Update Onboarding | `PATCH` | `/api/webhooks/contacts/{contactId}/onboarding` | Move a client to an onboarding milestone and record metadata as an engagement event. |
 | Update Discord IDs | `PATCH` | `/api/webhooks/contacts/{contactId}/discord` | Save the client's Discord channel and user IDs. |
+| Update Profile | `PATCH` | `/api/webhooks/contacts/{contactId}/profile` | Mirror a CRM contact edit (name, phone) onto the client. No sale, payment, or engagement side effects. |
 | Update Track | `PATCH` | `/api/webhooks/contacts/{contactId}/track` | Assign the client to a dashboard track and group. |
 | Create Call | `POST` | `/api/webhooks/contacts/{contactId}/calls` | Create a scheduled call record. |
 | Update Call | `PATCH` | `/api/webhooks/calls/{callId}` | Update a call after completion, no-show, cancellation, or rebooking. |
@@ -394,6 +395,48 @@ Endpoint-specific errors:
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `500` | `Failed to update client onboarding.` | Unexpected database/server failure. |
 
+### PATCH /api/webhooks/contacts/{contactId}/profile - Update Profile
+
+Mirrors a CRM contact edit onto the dashboard client. Wire it to the GHL "Contact Changed" trigger (name or phone). Use this, not `POST /api/webhooks/clients`, for contact edits: the sale route seeds payments, reconciles balances, and fires coaching workflows, none of which a name or phone fix should do. This route changes only the fields sent, stamps no engagement, and does not touch health.
+
+Email is identity and is not accepted here (unknown keys, including `email`, return `400`). Each changed field is recorded in the client's property history with source **Webhook**. A redelivery with the same values writes nothing and returns `"changed": []`; so does a delivery that loses a race with a concurrent edit (the later CRM delivery carries the final values). Like every contact-scoped route, addressing a client in the trash restores it.
+
+```http
+PATCH /api/webhooks/contacts/{contactId}/profile
+```
+
+Request body schema (at least one field required):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | No | Client's full name as shown in the CRM. |
+| `phone` | string | No | Phone number, stored as sent. |
+
+Example request:
+
+```json
+{
+  "name": "Ada King",
+  "phone": "+1 555 0199"
+}
+```
+
+Success response (`200`):
+
+```json
+{
+  "success": true,
+  "client": {
+    "id": "client_1",
+    "name": "Ada King",
+    "phone": "+1 555 0199",
+    "changed": ["name", "phone"]
+  }
+}
+```
+
+Errors: `400` empty body, blank value, or unknown key; `404` client not found.
+
 ### PATCH /api/webhooks/contacts/{contactId}/discord - Update Discord IDs
 
 Stores Discord identifiers for a client.
@@ -498,7 +541,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/calls - Create Call
 
-Creates a scheduled call record for a client. The call starts with status `SCHEDULED`.
+Creates a scheduled call record for a client. The call starts with status `SCHEDULED`. Booking counts as engagement: the client's last-engagement time advances to the booking time and health is recomputed.
 
 ```http
 POST /api/webhooks/contacts/{contactId}/calls
@@ -568,7 +611,7 @@ Endpoint-specific errors:
 
 ### PATCH /api/webhooks/calls/{callId} - Update Call
 
-Updates an existing call after it happens or changes status.
+Updates an existing call after it happens or changes status. A `completed` status counts as engagement (last-engagement time advances to `happened_at`, or the update time if omitted) and triggers a health recompute.
 
 ```http
 PATCH /api/webhooks/calls/{callId}
@@ -634,7 +677,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/payments - Create Payment
 
-Records a backend payment and recalculates the client's remaining balance.
+Records a backend payment and recalculates the client's remaining balance. Also triggers a health recompute: a payment can bring an offboarded (GREY) client back into RED/YELLOW/GREEN.
 
 **Sale-seed merging:** a sale webhook (`POST /api/webhooks/clients`) with `cash_collected` seeds a ledger payment for that sale. When this endpoint later receives a payment with exactly the same cash within 7 days of an unclaimed seed, the delivery is treated as the back-end recording of that same money: the seed is updated in place (date, closer, notes, external id) instead of a duplicate being created, and the response is HTTP `200` (not `201`) with `"merged_into_sale_seed": true`. Each seed can be claimed at most once; a later payment with the same cash creates a new ledger row as normal. Deliveries that hit different sale seeds, or arrive outside the window, behave exactly as before. Concurrent delivery of the sale webhook and the matching payment webhook (within the same second) can bypass the merge and record the money twice; sequence the two calls in the sender when both are emitted.
 
@@ -1343,7 +1386,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
-Logs a client activity event.
+Logs a client activity event. Advances the client's last-engagement time and triggers a health recompute; an event dated after an offboarded (GREY) client's offboarding brings them back into RED/YELLOW/GREEN.
 
 ```http
 POST /api/webhooks/contacts/{contactId}/engagement
