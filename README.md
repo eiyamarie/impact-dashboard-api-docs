@@ -98,6 +98,7 @@ If the server operator has **not** set **`WEBHOOK_API_KEY`**, all requests recei
 - Optional string fields may be omitted, but if present must be non-empty after trimming.
 - Dates must be ISO 8601 datetimes with a timezone offset, for example `2026-05-01T10:00:00.000Z` or `2026-05-01T18:00:00+08:00`.
 - Money fields may be JSON numbers or numeric strings such as `2500`, `"2500"`, or `"2500.00"`.
+- **URL fields** (any field documented as type `URL`, plus `evidence_urls`) must use the `http` or `https` scheme and must not embed a username or password. `javascript:`, `data:`, `file:`, other schemes, and credential forms such as `https://app.pandadoc.com@evil.test/doc` are rejected with **`400`**. Every URL the dashboard stores is later rendered as a link a staff member can click, so a link that carries script or that names one host while visiting another is refused at the door. Maximum length is 10,000 characters.
 - JSON metadata fields (where documented) may contain strings, numbers, booleans, null, arrays, or nested objects, but nested metadata is capped at **8 levels** deep and **500** scalar/array/object nodes total per field.
 - Contact-scoped paths use the `{contactId}` path parameter, which accepts either the GHL CRM `contactid` or the dashboard's internal client id.
 - Call-specific paths use the dashboard call id returned by successful create-call responses.
@@ -236,7 +237,7 @@ Request body schema:
 | `payment_plan` | string | No | Payment plan description. |
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
-| `signed_agreement_url` | URL | No | Link to the client's signed PandaDoc agreement. Sent once the client has completed/signed the document. Like `development_doc_url`, omitting it on a later update preserves the stored value. |
+| `signed_agreement_url` | URL | No | Link to the client's signed PandaDoc agreement. Sent once the client has completed/signed the document. Like `development_doc_url`, omitting it on a later update preserves the stored value. Must be http(s) with no embedded credentials (see Request Rules). |
 | `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
 | `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. The dashboard displays `B2C` as "Individual". |
 
@@ -543,6 +544,8 @@ Endpoint-specific errors:
 
 Creates a scheduled call record for a client. The call starts with status `SCHEDULED`. Booking counts as engagement: the client's last-engagement time advances to the booking time and health is recomputed.
 
+Calls can also be created inside the dashboard, by a user with call-content access, through **Log a call** on the client's Calls tab. That path exists for ad-hoc calls no automation knows about; it writes the same `Call` row with `cal_com_event_id` left empty, applies the same booking and attendance engagement stamps, and never collides with a call sent here.
+
 ```http
 POST /api/webhooks/contacts/{contactId}/calls
 ```
@@ -623,7 +626,7 @@ Request body schema:
 | --- | --- | --- | --- |
 | `status` | enum | Yes | One of `completed`, `no_show`, `cancelled`, `rebooked`. |
 | `happened_at` | ISO datetime | No | Actual call time with timezone. |
-| `recording_url` | string | No | Recording URL. |
+| `recording_url` | URL | No | Recording URL. Must be http(s) with no embedded credentials (see Request Rules). |
 | `contact_id` | string | No | If set, the call must belong to this client (GHL `contactid` or internal client id). Omit to update by call id only. |
 
 Status mapping:
@@ -1714,7 +1717,7 @@ Request body schema (strict: an unknown key is a `400`):
 | `cause_of_refund` | string | No | Where the cause of the refund lies. |
 | `reason` | string | Yes | The reason the client gave. |
 | `agreement_url` | string | No | Link to the signed agreement. Must be `http` or `https`. |
-| `evidence_urls` | string or string[] | No | Supporting evidence link(s). A single URL string (what the form's one file-upload field produces) or an array of up to 10. Each must be `http` or `https`. An empty string counts as no evidence. Defaults to `[]`. |
+| `evidence_urls` | string or string[] | No | Supporting evidence link(s). A single URL string (what the form's one file-upload field produces) or an array of up to 10. Each must be `http` or `https` with no embedded credentials. An empty string counts as no evidence. Defaults to `[]`. |
 | `answers` | JSON | No | The raw form submission, kept so a later form change stays diagnosable. Defaults to a summary of the typed fields. |
 | `submitted_at` | ISO datetime | No | When the form was submitted. Defaults to the time of delivery. |
 | `event_id` | string | No | Submission id or static form label from the form tool. Used for duplicate rejection: the stored key is `event_id` plus a hash of the submission content (excluding `submitted_at`), so a static value (e.g. the form name) is safe and only an identical redelivery is rejected as a duplicate. Note this means two legitimate submissions with exactly the same answers also bounce with a 409; change any field to resubmit. An explicit `Idempotency-Key` header takes precedence (trimmed; max 200 chars, longer keys are ignored). |
