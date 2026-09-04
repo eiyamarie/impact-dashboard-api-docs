@@ -183,7 +183,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Sales Contact | `POST` | `/api/webhooks/sales/contacts` | Record a sales-funnel contact creation from the CRM. |
 | Record Dialer Call | `POST` | `/api/webhooks/sales/dialer-calls` | Record one dialer call event (dials, pickups, duration, disposition), matched to contacts by phone. |
 | Record Call Attendance | `POST` | `/api/webhooks/sales/attendance` | Record contact presence for one imp/strategy call; the Showed/No Show verdict is computed server-side. |
-| Record Weekly Ad Spend | `POST` | `/api/webhooks/sales/ad-spend` | Record one weekly ad-spend figure (Monday-start weeks, upserted per week and source). |
+| Record Weekly Ad Spend | `POST` | `/api/webhooks/sales/ad-spend` | Record one weekly ad-spend figure (any weekday start, upserted per week and source, spans must not overlap). |
 | Record Cash Collected | `POST` | `/api/webhooks/sales/cash` | Record one cash-collection event (closed sale) from the A1 mastersheet, matched to a funnel contact when possible; unmatched sales are stored but excluded from dashboard cash totals until they link. |
 | Record Slot Utilization | `POST` | `/api/webhooks/sales/slot-utilization` | Record one day's booked/available slot counts for one sales calendar. |
 | Create Engagement Event | `POST` | `/api/webhooks/contacts/{contactId}/engagement` | Log client activity or learning engagement. |
@@ -1198,7 +1198,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/sales/ad-spend - Record Weekly Ad Spend
 
-Records one weekly ad-spend figure from the client's Funnels & Ads sheet (updated Mondays by their ads team). Spend is weekly only, by design: the dashboard never splits a weekly figure into synthetic daily values, and `week_start` must be the Monday (UTC) the week begins so a week-boundary drift between the sheet and the dashboard cannot be introduced silently.
+Records one weekly ad-spend figure from the client's Funnels & Ads sheet. Spend is weekly only, by design: the dashboard never splits a weekly figure into synthetic daily values. `week_start` accepts any weekday (the sender's own week convention, Monday-start, Saturday-start, or otherwise); each row covers the 7 days beginning on `week_start`, and spans must not overlap another row for the same `source`, so spend can never be double-counted.
 
 **Idempotency:** upserted on (`week_start`, `source`): re-posting a corrected figure for the same week replaces the stored value rather than duplicating it.
 
@@ -1218,7 +1218,7 @@ Request body schema:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `week_start` | ISO date | Yes | The Monday the spend week begins, as a date only (`YYYY-MM-DD`), interpreted as UTC. Rejected with `400` if it is not a Monday, is more than 8 days in the future, or predates 2020-01-01. |
+| `week_start` | ISO date | Yes | The day the spend week begins, as a date only (`YYYY-MM-DD`), interpreted as UTC. Any weekday is accepted; the row covers the 7 days beginning on this date. Rejected with `400` if it is more than 8 days in the future, predates 2020-01-01, or its 7-day span overlaps an existing row for the same `source`. |
 | `spend` | number | Yes | Total spend for the week in dollars, 0 to 10,000,000. Stored as integer cents. |
 | `source` | string | No | Platform/campaign identifier when the sheet carries one, max 100 characters. Defaults to `all`. |
 
@@ -1251,7 +1251,7 @@ Endpoint-specific errors:
 | Status | Message | When it happens |
 | --- | --- | --- |
 | `400` | `Invalid request payload.` | Missing `week_start` or `spend`, a malformed value, or an unknown field. |
-| `400` | `week_start must be a Monday (UTC).` | `week_start` is any other weekday. |
+| `400` | `week_start <date> overlaps an existing ad-spend week starting <date> for source "<source>". Weekly spans must not overlap for the same source.` | The 7-day span starting at `week_start` intersects an existing row for the same `source` whose `week_start` differs. |
 | `400` | `week_start cannot be more than 8 days in the future.` | Future-typo guard. |
 | `400` | `Timestamp cannot be earlier than 2020-01-01.` | `week_start` predates 2020-01-01. |
 | `500` | `Failed to record ad spend.` | Unexpected database/server failure. |
