@@ -1818,12 +1818,11 @@ increase also resolves any open "no first RSVP" CX action.
 
 Each increase now creates a `GROUP_CALL_BOOKED` engagement event and advances Last Engage in the same transaction. A jump from 2 to 5 records three bookings in one activity. The activity appears in Timeline and Calls; it does not imply attendance or create a calendar appointment.
 
-Send optional `happened_at` with the source change timestamp. Updates at or before the last accepted timestamp are ignored. Without it, receipt time is used: equal-count retries are safe, but arbitrarily reordered legacy snapshots cannot be distinguished. Dates over five minutes in the future are rejected. Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
+Every delivery is dated when the dashboard receives it; the payload carries only the count. Send changes as they happen and the booking rows land at the right moment. Deliveries are taken in arrival order, so a delayed or reordered delivery is treated as a real change. Equal-count retries are safe (no new booking, no clock change). Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
 
 ```json
 {
-  "rsvp_count": 3,
-  "happened_at": "2026-09-07T10:00:00.000Z"
+  "rsvp_count": 3
 }
 ```
 
