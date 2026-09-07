@@ -335,6 +335,8 @@ Request body schema:
 | --- | --- | --- | --- |
 | `milestone` | enum | Yes | One of `contract_signed`, `questionnaire_completed`, `call_booked`, `call_completed`. |
 | `metadata` | JSON | No | Any structured automation context to store with the milestone event. See call detail fields above. |
+| `happened_at` | ISO datetime | No | When the milestone happened; defaults to receipt time and dates the activity row. Writes are last-write-wins, so send milestones in order. |
+| `signed_agreement_url` | URL | No | Signed document link for `contract_signed`. The dashboard shows Signed only when a link is on file, so send it whenever PandaDoc provides one. Must be http(s) without credentials. |
 
 Milestone mapping:
 
@@ -1389,7 +1391,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/contacts/{contactId}/engagement - Create Engagement Event
 
-Logs a client activity event. Advances the client's last-engagement time and triggers a health recompute; an event dated after an offboarded (GREY) client's offboarding brings them back into RED/YELLOW/GREEN.
+Logs a client activity event. Dates more than five minutes in the future are rejected. Advances the client's last-engagement time and triggers a health recompute; an event dated after an offboarded (GREY) client's offboarding brings them back into RED/YELLOW/GREEN.
 
 ```http
 POST /api/webhooks/contacts/{contactId}/engagement
@@ -1403,6 +1405,10 @@ Request body schema:
 | `event_id` | string | No | Stable upstream event id used to reject duplicate event deliveries. |
 | `event_date` | ISO datetime | Yes | Event timestamp with timezone. |
 | `metadata` | JSON | No | Structured event details. |
+
+For Discord, send one event per message across all community channels/threads that the listener can access. Include a stable `event_id` (recommended) or `metadata.message_id`; the latter is used for deduplication when no explicit idempotency key/event ID is supplied. The activity record retains only `message_id`, `channel_id`, `guild_id`, `discord_user_id`, and `source`, not message text. Timeline groups consecutive messages within 30 minutes, split at other events or a viewer-local day boundary. This grouping does not change Last Engage or delete individual events.
+
+For module completions, include `metadata.module` (as in the example below), `metadata.module_name`, or `metadata.lesson_name` so Timeline displays the human-readable name. Existing title/name aliases are also supported; missing names display “Module completed”.
 
 Supported `event_type` values:
 
@@ -1793,6 +1799,7 @@ webhook call to update the program.
 Accepted `milestone` values are `pandadoc_sent`, `pandadoc_signed`,
 `whop_access_granted`, `discord_linked`, `onboarding_sent`,
 `portal_completed`, and `certification_unlocked`.
+Pass `signed_agreement_url` (http(s), no credentials) with `pandadoc_signed` to save the completed agreement link. The dashboard shows Signed only when that link is on file; a `pandadoc_signed` milestone without a link stamps the membership but leaves the client Unsigned. Writes are last-write-wins.
 
 ```json
 {
@@ -1809,16 +1816,20 @@ last-increase timestamps only when the count strictly increases; a lower
 count (cancelled bookings) is stored without moving either timestamp. An
 increase also resolves any open "no first RSVP" CX action.
 
+Each increase now creates a `GROUP_CALL_BOOKED` engagement event and advances Last Engage in the same transaction. A jump from 2 to 5 records three bookings in one activity. The activity appears in Timeline and Calls; it does not imply attendance or create a calendar appointment.
+
+Send optional `happened_at` with the source change timestamp. Updates at or before the last accepted timestamp are ignored. Without it, receipt time is used: equal-count retries are safe, but arbitrarily reordered legacy snapshots cannot be distinguished. Dates over five minutes in the future are rejected. Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
+
 ```json
 {
-  "rsvp_count": 3
+  "rsvp_count": 3,
+  "happened_at": "2026-09-07T10:00:00.000Z"
 }
 ```
 
 The protected daily endpoint `POST /api/automation/run-accelerator-operations`
-creates durable CX actions for no first RSVP after 24 hours, no attended call
-after 7 days, and certification review. Schedule it once daily with the
-existing cron authentication.
+creates durable CX actions for no first RSVP after 24 hours, no new booking
+after 7 days, and certification review. The existing hourly risk-engine endpoint checks overdue first-RSVP deadlines on every tick, independently of the chosen full daily review hour. With a healthy hourly scheduler, the normal delay after 24 hours is at most one tick; the engine enable flag and manual overrides still apply. Accelerator has no kickoff/onboarding-call requirement.
 
 ## Curl Examples
 
