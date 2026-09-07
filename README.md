@@ -1818,7 +1818,7 @@ increase also resolves any open "no first RSVP" CX action.
 
 Each increase now creates a `GROUP_CALL_BOOKED` engagement event and advances Last Engage in the same transaction. A jump from 2 to 5 records three bookings in one activity. The activity appears in Timeline and Calls; it does not imply attendance or create a calendar appointment.
 
-Every delivery is dated when the dashboard receives it; the payload carries only the count. Send changes as they happen and the booking rows land at the right moment. Deliveries are taken in arrival order, so a delayed or reordered delivery is treated as a real change. Equal-count retries are safe (no new booking, no clock change). Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
+Every delivery is dated when the dashboard receives it; the payload carries only the count. A contact the dashboard does not know returns 404 and raises a warning in Admin, Activity, so a booking that could not be attributed is never silently dropped. Send changes as they happen and the booking rows land at the right moment. Deliveries are taken in arrival order, so a delayed or reordered delivery is treated as a real change. Equal-count retries are safe (no new booking, no clock change). Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
 
 ```json
 {
@@ -1828,7 +1828,9 @@ Every delivery is dated when the dashboard receives it; the payload carries only
 
 The protected daily endpoint `POST /api/automation/run-accelerator-operations`
 creates durable CX actions for no first RSVP after 24 hours, no new booking
-after 7 days, and certification review. The existing hourly risk-engine endpoint checks overdue first-RSVP deadlines on every tick, independently of the chosen full daily review hour. With a healthy hourly scheduler, the normal delay after 24 hours is at most one tick; the engine enable flag and manual overrides still apply. Accelerator has no kickoff/onboarding-call requirement.
+after 7 days, and certification review, for clients whose `program` is
+"Impact Accelerator"; a member later sold another program keeps their RSVP
+history but leaves these rules. The existing hourly risk-engine endpoint checks overdue first-RSVP deadlines on every tick, independently of the chosen full daily review hour. With a healthy hourly scheduler, the normal delay after 24 hours is at most one tick; the engine enable flag and manual overrides still apply. Accelerator has no kickoff/onboarding-call requirement.
 
 ## Curl Examples
 
