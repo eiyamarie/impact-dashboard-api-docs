@@ -191,6 +191,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Create Development Document | `POST` | `/api/webhooks/contacts/{contactId}/dev-docs` | Save an AI-generated or automation-generated development document. |
 | Create 1-on-1 Booking Request | `POST` | `/api/webhooks/contacts/{contactId}/one-on-one-requests` | Store a client's 1-on-1 booking form submission for operator approval or denial. |
 | Create Refund Request | `POST` | `/api/webhooks/contacts/{contactId}/refund-requests` | Store an internal refund request for the approver to approve or deny. |
+| Record Whop Settlement Event | `POST` | `/api/webhooks/whop/refund-events` | Record a processed Whop refund or dispute event for Delivery scorecards. |
 | Enroll Accelerator Member | `POST` | `/api/webhooks/accelerator/enrollments` | Create or update an Impact Accelerator membership. |
 | Update Accelerator Onboarding | `PATCH` | `/api/webhooks/accelerator/{contactId}/onboarding` | Record PandaDoc, access, onboarding, portal, and certification milestones. |
 | Sync Accelerator RSVP Count | `PATCH` | `/api/webhooks/accelerator/{contactId}/rsvp-count` | Mirror the GHL "IA Coaching Calls RSVP Count" custom field onto the membership. |
@@ -1776,6 +1777,29 @@ Endpoint-specific errors:
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `409` | `Duplicate refund request webhook.` | The same `Idempotency-Key` or `event_id` was already processed. |
 | `500` | `Failed to create refund request.` | Unexpected database/server failure. |
+
+### POST /api/webhooks/whop/refund-events - Record Whop Settlement Event
+
+Records an immutable processed refund or dispute event from Whop for the owner-only Delivery Scorecard. This is separate from refund requests: a request or approval does not prove that a payment was refunded.
+
+```http
+POST /api/webhooks/whop/refund-events
+```
+
+The endpoint uses the standard `x-api-key` webhook authentication. `event_id` is the provider's immutable event ID and must be supplied again on retries. The same ID with identical data returns success without creating another event; changed immutable data returns `409`. Two simultaneous first deliveries of one ID can also produce a `409` for the loser; re-sending it returns the idempotent `200`. Events are linked to a client when possible, by exact match on a stored Whop user id (Accelerator membership or client card), for reconciliation only; every settled event counts toward Units Refunded whether or not it matched, and no client-level events are ever shown.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `event_id` | string | Yes | Whop/provider event ID, unique. |
+| `event_type` | `refund` or `dispute` | Yes | Normalized by the sender. |
+| `status` | string | Yes | Refund: `succeeded`, `pending`, `failed`, `cancelled`, `reversed`. Dispute: `opened`, `lost`, `won`, `withdrawn`, `cancelled`, `reversed`. |
+| `occurred_at` | ISO 8601 timestamp | Yes | Provider event time; scorecards use this, not receipt time. |
+| `whop_user_id` | string | Yes | Whop's customer id; the distinct-count key. Also used for the exact-match client link (reconciliation only). |
+| `payment_id` | string | No | Provider payment ID for reconciliation. |
+| `amount` | number or formatted money string | No | Reconciliation only, stored as cents. |
+| `currency` | three-letter code | No | Reconciliation only. |
+
+Only `refund/succeeded` and `dispute/lost` count as Units Refunded. A later `refund/reversed`, or a later `dispute/won`, `withdrawn`, `cancelled`, or `reversed`, for the same `payment_id` undoes the earlier count without editing history, so send `payment_id` whenever Whop supplies one (without it, an undo is matched to the same person's payment-less events only). The Delivery scorecard counts distinct Whop users per window, so multiple installments or a refund plus a lost dispute count as one unit. Whop is the Accelerator's payment platform, so every event on the account is an Accelerator refund and no membership or client match is required to count. It shows only the aggregate count, never a client list; the client link is for reconciliation.
 
 ### Impact Accelerator operations
 
