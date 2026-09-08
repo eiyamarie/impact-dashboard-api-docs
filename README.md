@@ -1816,7 +1816,7 @@ last-increase timestamps only when the count strictly increases; a lower
 count (cancelled bookings) is stored without moving either timestamp. An
 increase also resolves any open "no first RSVP" CX action.
 
-Each increase now creates a `GROUP_CALL_BOOKED` engagement event and advances Last Engage in the same transaction. A jump from 2 to 5 records three bookings in one activity. The activity appears in Timeline and Calls; it does not imply attendance or create a calendar appointment.
+Each increase creates a `GROUP_CALL_BOOKED` engagement event, one completed `GROUP_COACHING` call record per booking (an RSVP is a completed group coaching call, 2026-09-08), and advances Last Engage, all in the same transaction. A jump from 2 to 5 records one activity and three calls, each dated when the delivery arrived because the payload carries no session date. The activity appears in the Timeline and links to the Calls tab, where the calls take notes like any other call and count as completed calls for health and metrics. Removing the booking from the Timeline removes its calls.
 
 Every delivery is dated when the dashboard receives it; the payload carries only the count. A contact the dashboard does not know returns 404 and raises a warning in Admin, Activity, so a booking that could not be attributed is never silently dropped. Send changes as they happen and the booking rows land at the right moment. Deliveries are taken in arrival order, so a delayed or reordered delivery is treated as a real change. Equal-count retries are safe (no new booking, no clock change). Do not replay historical totals as new bookings; reconcile historical snapshots with original timestamps separately.
 
