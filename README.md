@@ -1780,7 +1780,7 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/whop/refund-events - Record Whop Settlement Event
 
-Records an immutable processed refund or dispute event from Whop for the owner-only Delivery Scorecard. This is separate from refund requests: a request or approval does not prove that a payment was refunded.
+Records an immutable processed refund or dispute event from Whop for the Delivery Scorecard. This is separate from refund requests: a request or approval does not prove that a payment was refunded.
 
 ```http
 POST /api/webhooks/whop/refund-events
