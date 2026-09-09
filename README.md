@@ -1201,7 +1201,9 @@ Endpoint-specific errors:
 
 ### POST /api/webhooks/sales/ad-spend - Record Weekly Ad Spend
 
-Records one weekly ad-spend figure from the client's Funnels & Ads sheet. Spend is weekly only, by design: the dashboard never splits a weekly figure into synthetic daily values. `week_start` accepts any weekday (the sender's own week convention, Monday-start, Saturday-start, or otherwise); each row covers the 7 days beginning on `week_start`, and spans must not overlap another row for the same `source`, so spend can never be double-counted.
+Records one weekly ad-spend figure from the client's Funnels & Ads sheet. Spend is weekly only, by design: the dashboard never splits a weekly figure into synthetic daily values.
+
+**No reported row reads these rows any more (2026-09-10).** The scorecards' Ad Spend, CPL, CAC and CROAS take Meta spend from the marketing bridge's `ad-spend-daily` endpoint instead, because this feed is a hand-kept sheet that arrives a week late and could therefore never cover the current month. These rows are kept as a reconciliation record (the bridge figure matched the sheet to 8 cents for the week of 2026-08-31). Deliberately NOT a fallback: a bridge outage makes those rows read "unavailable", because silently answering with a week-late sheet figure would answer a different question. `week_start` accepts any weekday (the sender's own week convention, Monday-start, Saturday-start, or otherwise); each row covers the 7 days beginning on `week_start`, and spans must not overlap another row for the same `source`, so spend can never be double-counted.
 
 **Idempotency:** upserted on (`week_start`, `source`): re-posting a corrected figure for the same week replaces the stored value rather than duplicating it.
 
