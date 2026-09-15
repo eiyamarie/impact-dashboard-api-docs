@@ -108,6 +108,11 @@ If the server operator has **not** set **`WEBHOOK_API_KEY`**, all requests recei
 - Maximum JSON body size is **256 KiB**.
 - Oversized bodies fail validation like malformed JSON (typically **`400`** `Invalid request payload.`).
 
+### User role values
+
+- Accepted role input strings are `owner`, `admin`, `member`, and `b2b_client`. `user` and `sales` are kept as aliases of `member` for backward compatibility: an existing integration that still sends one of them keeps working, it is no longer offered as a distinct choice anywhere new.
+- `department` is an optional field on member-role users: one of `SALES`, `MARKETING`, `DELIVERY`, `TECH`. It replaces the old USER/SALES role distinction; a member's department, not their role, now determines which dashboard area they see.
+
 ## Responses And Errors
 
 ### Success Responses
