@@ -1414,7 +1414,25 @@ Request body schema:
 | `event_date` | ISO datetime | Yes | Event timestamp with timezone. |
 | `metadata` | JSON | No | Structured event details. |
 
-For Discord, send one event per message across all community channels/threads that the listener can access. Include a stable `event_id` (recommended) or `metadata.message_id`; the latter is used for deduplication when no explicit idempotency key/event ID is supplied. The activity record retains only `message_id`, `channel_id`, `guild_id`, `discord_user_id`, and `source`, not message text. Timeline groups consecutive messages within 30 minutes, split at other events or a viewer-local day boundary. This grouping does not change Last Engage or delete individual events.
+For Discord, send one event per message across all community channels/threads that the listener can access. Include a stable `event_id` (recommended) or `metadata.message_id`; the latter is used for deduplication when no explicit idempotency key/event ID is supplied. The activity record retains only `message_id`, `channel_id`, `channel_name`, `guild_id`, `discord_user_id`, and `source`, not message text. Send `channel_name` (the channel's display name, with or without the leading `#`): the Timeline shows it under the row as `#wins`, and a grouped burst names the channels it spans (`#wins and #general`, `#wins and 2 other channels`). Without it the row has no second line. Timeline groups consecutive messages within 30 minutes, split at other events or a viewer-local day boundary. This grouping does not change Last Engage or delete individual events.
+
+Discord example:
+
+```json
+{
+  "event_type": "discord_message",
+  "event_id": "1234567890123456789",
+  "event_date": "2026-09-16T14:00:00.000Z",
+  "metadata": {
+    "message_id": "1234567890123456789",
+    "channel_id": "987654321098765432",
+    "channel_name": "wins",
+    "guild_id": "111111111111111111",
+    "discord_user_id": "222222222222222222",
+    "source": "discord"
+  }
+}
+```
 
 For module completions, include `metadata.module` (as in the example below), `metadata.module_name`, or `metadata.lesson_name` so Timeline displays the human-readable name. Existing title/name aliases are also supported; missing names display “Module completed”.
 
