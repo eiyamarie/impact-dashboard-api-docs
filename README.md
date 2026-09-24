@@ -1889,7 +1889,27 @@ The protected daily endpoint `POST /api/automation/run-accelerator-operations`
 creates durable CX actions for no first RSVP after 24 hours, no new booking
 after 7 days, and certification review, for clients whose `program` is
 "Impact Accelerator"; a member later sold another program keeps their RSVP
-history but leaves these rules. The existing hourly risk-engine endpoint checks overdue first-RSVP deadlines on every tick, independently of the chosen full daily review hour. With a healthy hourly scheduler, the normal delay after 24 hours is at most one tick; the engine enable flag and manual overrides still apply. Accelerator has no kickoff/onboarding-call requirement.
+history but leaves these rules.
+
+The same run then reconciles the stored 48h activation: for every client that
+is measured (Accelerator program with a sale date) or still holds a stored
+value, it recomputes and writes `Client.activationWindowEndsAt` and
+`Client.activatedAt` through `recomputeClientActivation()`
+(`lib/accelerator/activation-store.ts`). One client's failure is captured in
+Admin, Activity, Errors and skipped; the rest of the run continues. Last, it
+offboards members whose six months are up. The response is
+`{ ok, scanned, created, offboarded, activationReconciled, activationReconcileFailed }`,
+plus `dryRun: true` on a dry run: `activationReconciled` counts clients whose
+stored values changed (or would change), `activationReconcileFailed` counts
+clients whose recompute threw. `?dryRun=1` skips only the activation reconcile
+writes and the offboard pass (both still counted); it still runs the
+action-item sweep and the membership refresh, which write as they always have.
+The daily Railway cron calls this endpoint without `dryRun`, so the first daily
+tick after a deploy runs the real reconcile (this is how the stored activation
+is backfilled, with no manual step); a manual dry-run call is optional, for
+checking the counts first.
+
+The existing hourly risk-engine endpoint checks overdue first-RSVP deadlines on every tick, independently of the chosen full daily review hour. With a healthy hourly scheduler, the normal delay after 24 hours is at most one tick; the engine enable flag and manual overrides still apply. Accelerator has no kickoff/onboarding-call requirement.
 
 ## Curl Examples
 
