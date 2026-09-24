@@ -244,6 +244,7 @@ Request body schema:
 | `context_notes` | string | No | Internal context notes. |
 | `development_doc_url` | URL | No | Link to the client's living Development Doc. |
 | `signed_agreement_url` | URL | No | Link to the client's signed PandaDoc agreement. Sent once the client has completed/signed the document. Like `development_doc_url`, omitting it on a later update preserves the stored value. Must be http(s) with no embedded credentials (see Request Rules). |
+| `whop_username` | string | No | The member's Whop username, stored exactly as sent after trimming (send it as Whop shows it, without `@`). A blank value is treated as not sent, so an unanswered sale-form question never fails the sale or clears a stored username. Omitting it on a later update preserves the stored value. |
 | `pod_types` | string or array | No | Coaching track type(s). Accepts a JSON array (`["SALES","MINDSET"]`) or a comma-separated string (`"SALES,MINDSET"`). Each value must be one of `SALES`, `MINDSET`. Unknown values are silently ignored. Defaults to `[]`. |
 | `client_type` | enum | No | `B2B` or `B2C`. Set `B2B` for companies whose sales reps report daily numbers (see the B2B EOD endpoint); the company then appears in the dashboard B2B section. Defaults to `B2C`. The dashboard displays `B2C` as "Individual". |
 
@@ -406,7 +407,7 @@ Endpoint-specific errors:
 
 ### PATCH /api/webhooks/contacts/{contactId}/profile - Update Profile
 
-Mirrors a CRM contact edit onto the dashboard client. Wire it to the GHL "Contact Changed" trigger (name or phone). Use this, not `POST /api/webhooks/clients`, for contact edits: the sale route seeds payments, reconciles balances, and fires coaching workflows, none of which a name or phone fix should do. This route changes only the fields sent, stamps no engagement, and does not touch health.
+Mirrors a CRM contact edit onto the dashboard client. Wire it to the GHL "Contact Changed" trigger (name, phone, or Whop Username). Use this, not `POST /api/webhooks/clients`, for contact edits: the sale route seeds payments, reconciles balances, and fires coaching workflows, none of which a name or phone fix should do. This route changes only the fields sent, stamps no engagement, and does not touch health.
 
 Email is identity and is not accepted here (unknown keys, including `email`, return `400`). Each changed field is recorded in the client's property history with source **Webhook**. A redelivery with the same values writes nothing and returns `"changed": []`; so does a delivery that loses a race with a concurrent edit (the later CRM delivery carries the final values). Like every contact-scoped route, addressing a client in the trash restores it.
 
@@ -420,6 +421,7 @@ Request body schema (at least one field required):
 | --- | --- | --- | --- |
 | `name` | string | No | Client's full name as shown in the CRM. |
 | `phone` | string | No | Phone number, stored as sent. |
+| `whop_username` | string | No | The GHL "Whop Username" contact field, stored exactly as sent after trimming. Unlike `name` and `phone`, a blank value is treated as not sent rather than rejected, because the field is often empty; a body whose only field is a blank `whop_username` still returns `400`. |
 
 Example request:
 
@@ -439,12 +441,13 @@ Success response (`200`):
     "id": "client_1",
     "name": "Ada King",
     "phone": "+1 555 0199",
+    "whopUsername": null,
     "changed": ["name", "phone"]
   }
 }
 ```
 
-Errors: `400` empty body, blank value, or unknown key; `404` client not found.
+Errors: `400` empty body, blank `name` or `phone`, or unknown key; `404` client not found.
 
 ### PATCH /api/webhooks/contacts/{contactId}/discord - Update Discord IDs
 
