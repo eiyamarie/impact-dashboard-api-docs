@@ -328,7 +328,7 @@ Pass optional call details inside `metadata` to enrich the record:
 | --- | --- | --- |
 | `coach` | string | Coach name stored on the call record. |
 | `scheduled_at` | ISO datetime | Scheduled call time (used on `call_booked`). |
-| `happened_at` | ISO datetime | Actual call time (used on `call_completed`; defaults to now). |
+| `happened_at` | ISO datetime | Actual call time (used on `call_completed`; defaults to now). For `call_completed`, must not be in the future beyond a small clock-skew allowance; otherwise 400 and nothing is written. |
 
 For richer call records - including Cal.com event IDs, recording URLs, transcripts, and AI summaries - use the dedicated `POST .../calls` and `PATCH /api/webhooks/calls/{callId}` endpoints alongside or instead of the milestone.
 
@@ -402,6 +402,7 @@ Endpoint-specific errors:
 | --- | --- | --- |
 | `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `milestone`, invalid `metadata`, or unknown fields. |
+| `400` | `metadata.happened_at cannot be in the future for a completed call.` | A `call_completed` milestone whose `metadata.happened_at` is in the future beyond the clock-skew allowance. Nothing is written. |
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
 | `500` | `Failed to update client onboarding.` | Unexpected database/server failure. |
 
@@ -409,7 +410,7 @@ Endpoint-specific errors:
 
 Mirrors a CRM contact edit onto the dashboard client. Wire it to the GHL "Contact Changed" trigger (name, phone, or Whop Username). Use this, not `POST /api/webhooks/clients`, for contact edits: the sale route seeds payments, reconciles balances, and fires coaching workflows, none of which a name or phone fix should do. This route changes only the fields sent, stamps no engagement, and does not touch health.
 
-Email is identity and is not accepted here (unknown keys, including `email`, return `400`). Each changed field is recorded in the client's property history with source **Webhook**. A redelivery with the same values writes nothing and returns `"changed": []`; so does a delivery that loses a race with a concurrent edit (the later CRM delivery carries the final values). Like every contact-scoped route, addressing a client in the trash restores it.
+Email is identity and is not accepted here (unknown keys, including `email`, return `400`). Each changed field is recorded in the client's property history with source **Webhook**. A redelivery with the same values writes nothing and returns `"changed": []`; so does a delivery that loses a race with a concurrent edit (the later CRM delivery carries the final values). Like every contact-scoped route, addressing a client in the trash restores it, but only once the request passes validation; a `400` never restores.
 
 ```http
 PATCH /api/webhooks/contacts/{contactId}/profile
@@ -636,7 +637,7 @@ Request body schema:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `status` | enum | Yes | One of `completed`, `no_show`, `cancelled`, `rebooked`. |
-| `happened_at` | ISO datetime | No | Actual call time with timezone. |
+| `happened_at` | ISO datetime | No | Actual call time with timezone. For `completed`, the effective completion time (this value, or the stored call time when omitted) must not be in the future beyond a small clock-skew allowance; otherwise 400 and nothing is written. |
 | `recording_url` | URL | No | Recording URL. Must be http(s) with no embedded credentials (see Request Rules). |
 | `contact_id` | string | No | If set, the call must belong to this client (GHL `contactid` or internal client id). Omit to update by call id only. |
 
@@ -684,6 +685,7 @@ Endpoint-specific errors:
 | --- | --- | --- |
 | `400` | `Invalid call id.` | `{callId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing/invalid `status`, invalid date, blank optional string, or unknown fields. |
+| `400` | `happened_at cannot be in the future for a completed call.` | The effective completion time (`happened_at`, or the stored call time when omitted) is in the future beyond the clock-skew allowance. Nothing is written. |
 | `404` | `Client not found.` | `contact_id` was sent but does not match any client. |
 | `404` | `Call not found.` | No call exists for `{callId}` (when `contact_id` is omitted). |
 | `404` | `Call not found or does not belong to the specified client.` | `contact_id` is set but no call matches both `{callId}` and that client. |
@@ -762,7 +764,8 @@ Endpoint-specific errors:
 | `400` | `Invalid contact id.` | `{contactId}` is blank or invalid. |
 | `400` | `Invalid request payload.` | Missing `amount` or `payment_date`, invalid money/date format, a `payment_date` in the future, blank optional string, or unknown fields. |
 | `404` | `Client not found.` | No client exists for `{contactId}`. |
-| `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. |
+| `409` | `Duplicate payment webhook.` | The same `Idempotency-Key` or `external_payment_id` was already processed. Before answering, the duplicate refreshes the client's balance; if that refresh fails, it answers the `500` below instead. |
+| `500` | `Payment saved but balance update failed; retry this delivery.` | Keyed deliveries only (`Idempotency-Key` or `external_payment_id`): the payment was saved but the client's balance refresh failed. Retry the same delivery; the key prevents a second payment, and the retry refreshes the balance. A delivery with no key never gets this answer: it receives its normal `201`/`200` and the balance is repaired in the dashboard. |
 | `500` | `Failed to create payment.` | Unexpected database/server failure. |
 
 ### POST /api/webhooks/b2b/clients - Create B2B Company
