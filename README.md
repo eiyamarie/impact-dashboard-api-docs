@@ -202,6 +202,7 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Sync Accelerator RSVP Count | `PATCH` | `/api/webhooks/accelerator/{contactId}/rsvp-count` | Mirror the GHL "IA Coaching Calls RSVP Count" custom field onto the membership. |
 | Survey State | `POST` | `/api/webhooks/whop-feedback/state` | What the Whop feedback app should show a member (locked, open, done, ended). |
 | Submit Survey | `POST` | `/api/webhooks/whop-feedback/submissions` | Store one checkpoint survey and start its $15 payout. |
+| Survey App Error | `POST` | `/api/webhooks/whop-feedback/errors` | Record a failure the Whop feedback app hit, in Admin, Activity, Errors. |
 
 ## Endpoint Reference
 
@@ -1876,6 +1877,17 @@ Same auth and matching as Survey State. One row per member per checkpoint. The s
 | `answers.improve_most_other` | string or null | Yes | Required exactly when `improve_most` is `OTHER`. |
 | `answers.work_on_most` | `IMPACT_FORMULA` / `CONVERSATIONAL` / `CONFIDENT` / `MORE_APPLICATIONS` / `OBJECTION_HANDLING` / `OTHER` or null | Yes | Required when looking for an offer, null otherwise. |
 | `answers.work_on_most_other` | string or null | Yes | Required exactly when `work_on_most` is `OTHER`. |
+
+### POST /api/webhooks/whop-feedback/errors - Survey App Error
+
+Called by the Whop feedback app when it hits a failure the dashboard cannot see on its own: the Whop token check could not run (in practice a missing app setting, which locks every member out), Whop's access check failed, or the submit step crashed. Failed calls to the dashboard are not reported here, because they are already in the webhook log. Same `x-api-key` authentication; unknown keys are a `400`. The body carries labels only, never message text or a stack, so nothing private can cross over. Each report is recorded in Admin, Activity, Errors with the route `survey-app/<step>`, one error group per step, error class and status, so an outage is one row with a count. `token_verify` and `submit_action` are `ERROR`, `access_check` is `WARNING`. The dashboard records at most 6 reports a minute per step, class and status, and 30 a minute in total, and acknowledges the rest without recording them. Response is always `200 { "success": true, "received": true }` once the body validates; recording is best effort.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `step` | `token_verify` / `access_check` / `submit_action` | Yes | Where it failed. |
+| `error_class` | string, 1 to 80 of `A-Z a-z 0-9 _ . -` | Yes | The error's class name, for example `WhopTimeoutError`. |
+| `status` | integer 100 to 599 | No | HTTP status from Whop, when there was one. |
+| `whop_user_id` | string | No | `user_...`, when the app had already verified who the member is. |
 
 ### Impact Accelerator operations
 
