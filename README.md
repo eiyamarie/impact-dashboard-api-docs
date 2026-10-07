@@ -200,6 +200,8 @@ For payment, engagement, and placement survey webhooks, send an `Idempotency-Key
 | Enroll Accelerator Member | `POST` | `/api/webhooks/accelerator/enrollments` | Create or update an Impact Accelerator membership. |
 | Update Accelerator Onboarding | `PATCH` | `/api/webhooks/accelerator/{contactId}/onboarding` | Record PandaDoc, access, onboarding, portal, and certification milestones. |
 | Sync Accelerator RSVP Count | `PATCH` | `/api/webhooks/accelerator/{contactId}/rsvp-count` | Mirror the GHL "IA Coaching Calls RSVP Count" custom field onto the membership. |
+| Survey State | `POST` | `/api/webhooks/whop-feedback/state` | What the Whop feedback app should show a member (locked, open, done, ended). |
+| Submit Survey | `POST` | `/api/webhooks/whop-feedback/submissions` | Store one checkpoint survey and start its $15 payout. |
 
 ## Endpoint Reference
 
@@ -1841,6 +1843,39 @@ The response is always the same shape: `created`, `duplicates`, `conflicts`, `ig
 Only `refund/succeeded` and `dispute/lost` count as Units Refunded. The only status that undoes an earlier count for the same `payment_id` is `dispute/won`. `dispute/closed` does NOT undo (Whop does not document whether it can follow `lost`, and erasing a real chargeback is the worse error), and a refund `failed` or `canceled` does not either, for the reason in the Known gap below.
 
 **Known gap:** a refund that Whop later reports as `failed` or `canceled` does NOT undo its earlier `succeeded`, so Units Refunded can rise and not fall for refunds. Whop has no reversal status, and the undo is keyed on the payment, while one payment can carry several refunds: treating a later failed partial refund as an undo would erase an earlier successful one. Closing it needs the refund's own id stored as the undo key (see `docs/DECISIONS.md`). Dispute outcomes are unaffected, since a payment has one dispute. Matching is by payment only: a per-person fallback would let one reversal erase every refund that person has, which is why `payment_id` is required. The Delivery scorecard counts distinct Whop users per window, so multiple installments or a refund plus a lost dispute count as one unit. Whop is the Accelerator's payment platform, so every event on the account is an Accelerator refund and no membership or client match is required to count. It shows only the aggregate count, never a client list; the client link is for reconciliation.
+
+### POST /api/webhooks/whop-feedback/state - Survey State
+
+Called by the "Give Feedback For $$$" Whop app on every load. The app verifies Whop's user token itself and sends the verified id; this endpoint matches it to a client by stored Whop user id, then membership id, then Whop username and email (and stores the id on a fallback match). Standard `x-api-key` webhook authentication. Unknown keys are a `400`.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `whop_user_id` | string | Yes | `user_...`, from the verified Whop user token. |
+| `whop_username` | string | No | Whop's username, for the fallback match. |
+| `whop_email` | string | No | Whop's email, for the fallback match. |
+
+Response `200 { "success": true, "survey": { "client": { "firstName" }, "state", "submitted": [...] } }`. `state.kind` is `locked` (`nextCheckpoint`, `daysUntil`), `open` (`checkpoint`, `closesInDays`), `done` (`nextCheckpoint|null`, `daysUntil|null`) or `ended`. Each `submitted[]` item is `{ "checkpoint": "D30|D90|D160", "submittedAt": "<ISO 8601 string>", "payoutStatus": "PENDING|PAID|FAILED|HELD" }`, oldest first. Errors: `400` (invalid body, including unknown keys), `401`/`403` (authentication), `404 unknown_member` when nothing matches (the app shows its "we couldn't find your enrolment" screen), `500` (unexpected failure).
+
+Windows: day 30 to 59, 90 to 119, 160 to 180 from the enrolment date on New York calendar days (`lib/surveys/checkpoint.ts`; option B in the spec changes the close days and also delays the next survey until 30 days after the previous submission). A submitted checkpoint closes at once; an expired one never reopens.
+
+### POST /api/webhooks/whop-feedback/submissions - Submit Survey
+
+Same auth and matching as Survey State. One row per member per checkpoint. The server recomputes eligibility: `409 already_submitted`, `409 checkpoint_closed`. Success is `201` with the same `survey` object as Survey State, so the app renders the thank-you page from it. `409 already_submitted` (including a lost race between two identical submits) carries the same object as `details`: `{ "success": false, "error": "already_submitted", "details": { "survey": { ... } } }`, so a retry after a dropped response can still render the thank-you page. Other errors: `400` (invalid body, including unknown keys), `401`/`403` (authentication), `404 unknown_member`, `500` (`Failed to save the survey.`; the survey may already have been stored, for example when reading the state back failed after the save, so retry: a retry returns `409 already_submitted` with the survey). The $15 Whop transfer starts after the row is saved (see Operations, `SURVEY_PAYOUTS_ENABLED`); its status is on `submitted[].payoutStatus`.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `whop_user_id` | string | Yes | As above. |
+| `whop_username`, `whop_email` | string | No | As above. |
+| `checkpoint` | `D30` / `D90` / `D160` | Yes | |
+| `answers.recommend_score` | integer 1 to 10 | Yes | |
+| `answers.score_reason`, `answers.worst_thing`, `answers.most_valuable` | string, max 2000 | Yes | |
+| `answers.anything_else` | string or null | Yes | |
+| `answers.offer_status` | `ON_OFFER_HAPPY` / `ON_OFFER_UNHAPPY` / `LOOKING` | Yes | |
+| `answers.take_home_bracket` | `B0_2K` ... `B50K_PLUS` or null | Yes | Required when on an offer, must be null otherwise. |
+| `answers.improve_most` | `IMPACT_FORMULA` / `CONVERSATIONAL` / `CONVICTION` / `OBJECTION_HANDLING` / `PRE_CALL` / `RGA` / `OTHER` or null | Yes | Required when on an offer, null otherwise. |
+| `answers.improve_most_other` | string or null | Yes | Required exactly when `improve_most` is `OTHER`. |
+| `answers.work_on_most` | `IMPACT_FORMULA` / `CONVERSATIONAL` / `CONFIDENT` / `MORE_APPLICATIONS` / `OBJECTION_HANDLING` / `OTHER` or null | Yes | Required when looking for an offer, null otherwise. |
+| `answers.work_on_most_other` | string or null | Yes | Required exactly when `work_on_most` is `OTHER`. |
 
 ### Impact Accelerator operations
 
